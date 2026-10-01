@@ -283,6 +283,18 @@ export default function Settings({ onClose }: Props): React.JSX.Element {
               <label className="settings__row settings__row--check">
                 <input
                   type="checkbox"
+                  checked={settings.autoGit}
+                  onChange={(e) => void patch({ autoGit: e.target.checked })}
+                />
+                <span>Git автоматически: репозиторий и коммит после проверок</span>
+              </label>
+              <p className="settings__hint">
+                Папка без git получает репозиторий при открытии. Задача с правками коммитится,
+                когда проверки и ревью зелёные; коммит с ключами или токенами не делается. Push — нет.
+              </p>
+              <label className="settings__row settings__row--check">
+                <input
+                  type="checkbox"
                   checked={settings.autoApprove}
                   onChange={(e) => void patch({ autoApprove: e.target.checked })}
                 />

@@ -131,6 +131,7 @@ export class SessionManager extends EventEmitter {
     assistant.on('state', () => this.pushSession())
     assistant.on('action', (event: TranscriptEvent) => this.emit('transcript', event))
     assistant.on('say', (text: string) => this.emit('say', text))
+    assistant.prepareRepo()
     this.unregisterHook = this.hooks.register(session.sessionId, (input) =>
       assistant.onPermissionRequest(input)
     )

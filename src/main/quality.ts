@@ -1,7 +1,16 @@
 import { execFile } from 'node:child_process'
-import { copyFileSync, existsSync, readdirSync, readFileSync, rmSync, statSync, utimesSync } from 'node:fs'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import {
+  copyFileSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync
+} from 'node:fs'
+import { join, resolve } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 import { getLoginShellEnv } from './paths.ts'
@@ -275,6 +284,156 @@ async function pruneCheckpoints(dir: string): Promise<void> {
 export async function worktreeFingerprint(dir: string): Promise<string | null> {
   // Хеш дерева со всем рабочим состоянием — меняется при любой правке файла.
   return snapshotTree(dir)
+}
+
+// ─────────────────────────── Git сам ───────────────────────────
+//
+// Репозиторий создаётся при открытии проекта, готовая работа коммитится после
+// зелёных проверок: без git нет точки отката, а ревьюер не видит дифф.
+
+export const DEFAULT_GITIGNORE = [
+  'node_modules/',
+  'dist/',
+  'out/',
+  'build/',
+  '.env',
+  '.env.*',
+  '*.pem',
+  '*.key',
+  '.DS_Store',
+  '*.log',
+  ''
+].join('\n')
+
+/** Больше файлов в первом коммите — скорее всего, открыта не папка проекта. */
+const MAX_INITIAL_FILES = 5000
+
+/** Автор коммитов, если у пользователя git-имя не настроено (иначе commit падает). */
+const FALLBACK_IDENTITY = ['-c', 'user.name=Claude Voice Desk', '-c', 'user.email=voice-desk@localhost']
+
+/** Корень, домашняя папка и системные — репозиторий там создавать нельзя. */
+export function canInitRepo(dir: string, home: string = homedir()): boolean {
+  const path = resolve(dir)
+  const homePath = resolve(home)
+  if (path === '/' || path === homePath) return false
+  const under = (root: string): boolean => path === root || path.startsWith(`${root}/`)
+  if (under(join(homePath, 'Library'))) return false
+  return !['/System', '/Library', '/Applications', '/usr', '/bin', '/sbin', '/etc', '/opt'].some(under)
+}
+
+/** Текст задачи → сообщение коммита: одна строка, не длиннее 72 символов. */
+export function commitMessage(task: string): string {
+  const prefix = 'Voice Desk: '
+  const text = task.replace(/\s+/g, ' ').trim()
+  if (!text) return `${prefix}изменения`
+  const room = 72 - prefix.length
+  return prefix + (text.length > room ? `${text.slice(0, room - 1).trimEnd()}…` : text)
+}
+
+/** Ключи и токены, которым не место в репозитории. */
+const SECRET_PATTERNS = [
+  /sk-ant-[A-Za-z0-9_-]{20,}/, // Anthropic
+  /\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}/, // OpenAI
+  /\bgh[pousr]_[A-Za-z0-9]{36,}/, // GitHub
+  /\bgithub_pat_[A-Za-z0-9_]{50,}/,
+  /\bAKIA[0-9A-Z]{16}\b/, // AWS
+  /\bAIza[0-9A-Za-z_-]{35}\b/, // Google
+  /\bxox[baprs]-[A-Za-z0-9-]{10,}/, // Slack
+  /\b\d{8,10}:AA[A-Za-z0-9_-]{33}\b/, // токен Telegram-бота
+  /-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----/
+]
+
+/** Файлы, в добавленных строках которых (`git diff -U0`) есть секрет. */
+export function findSecrets(diff: string): string[] {
+  const files: string[] = []
+  let file = ''
+  for (const line of diff.split('\n')) {
+    if (line.startsWith('+++ ')) {
+      file = line.slice(4).replace(/^b\//, '')
+      continue
+    }
+    if (!line.startsWith('+') || files.includes(file)) continue
+    if (SECRET_PATTERNS.some((re) => re.test(line))) files.push(file)
+  }
+  return files
+}
+
+export type CommitResult =
+  | { kind: 'committed'; sha: string }
+  | { kind: 'clean' }
+  | { kind: 'secrets'; files: string[] }
+  | { kind: 'failed'; note: string }
+
+/** Снимает всё с индекса — и когда коммитов ещё нет (тогда `git reset` не работает). */
+async function unstageAll(dir: string): Promise<void> {
+  if (await git(dir, ['rev-parse', '--verify', '-q', 'HEAD'])) await git(dir, ['reset', '-q'])
+  else await git(dir, ['rm', '-r', '-q', '--cached', '--ignore-unmatch', '.'])
+}
+
+/**
+ * Коммит всего рабочего состояния. Перед коммитом — поиск секретов в добавляемом:
+ * нашли — индекс возвращаем как был до `add`, файлы не трогаем. Хуки git
+ * пользователя (pre-commit) выполняются.
+ */
+export async function commitAll(dir: string, message: string): Promise<CommitResult> {
+  if ((await git(dir, ['add', '-A'])) === null) return { kind: 'failed', note: 'git add не удался' }
+  const staged = await git(dir, ['diff', '--cached', '--name-only'])
+  if (staged === null) return { kind: 'failed', note: 'не удалось прочитать изменения' }
+  if (!staged) return { kind: 'clean' }
+
+  const diff = await git(dir, ['diff', '--cached', '-U0', '--no-color', '--no-ext-diff'])
+  if (diff === null) {
+    await unstageAll(dir)
+    return { kind: 'failed', note: 'не удалось проверить изменения на секреты' }
+  }
+  const secrets = findSecrets(diff)
+  if (secrets.length) {
+    await unstageAll(dir)
+    return { kind: 'secrets', files: secrets }
+  }
+
+  const named = (await git(dir, ['config', 'user.name'])) && (await git(dir, ['config', 'user.email']))
+  const identity = named ? [] : FALLBACK_IDENTITY
+  if ((await git(dir, [...identity, 'commit', '-q', '-m', message])) === null) {
+    return { kind: 'failed', note: 'git commit не удался (возможно, его остановил хук pre-commit)' }
+  }
+  const sha = await git(dir, ['rev-parse', '--short', 'HEAD'])
+  return sha ? { kind: 'committed', sha } : { kind: 'failed', note: 'коммит не найден после git commit' }
+}
+
+export type RepoInit =
+  | { kind: 'exists' }
+  | { kind: 'skipped'; note: string }
+  | { kind: 'failed'; note: string }
+  /** `commit` нет — первый коммит не делали (пустая папка или слишком много файлов). */
+  | { kind: 'created'; gitignore: boolean; commit?: CommitResult; note?: string }
+
+/** Папка без git → репозиторий, `.gitignore` (если его нет) и первый коммит. */
+export async function ensureRepo(dir: string, home: string = homedir()): Promise<RepoInit> {
+  if ((await git(dir, ['rev-parse', '--is-inside-work-tree'])) === 'true') return { kind: 'exists' }
+  if (!canInitRepo(dir, home)) {
+    return { kind: 'skipped', note: 'в этой папке репозиторий не создаю — откройте папку проекта' }
+  }
+  if ((await git(dir, ['init', '-q', '-b', 'main'])) === null) return { kind: 'failed', note: 'git init не удался' }
+
+  let gitignore = false
+  try {
+    // 'wx' — не перезаписать .gitignore, появившийся между проверкой и записью.
+    writeFileSync(join(dir, '.gitignore'), DEFAULT_GITIGNORE, { flag: 'wx' })
+    gitignore = true
+  } catch {
+    // .gitignore уже есть — он ваш, не трогаем.
+  }
+
+  const untracked = await git(dir, ['ls-files', '--others', '--exclude-standard', '-z'])
+  // Наш свежий .gitignore не в счёт: в пустой папке коммитить пока нечего.
+  const files = untracked ? untracked.split('\0').filter(Boolean) : []
+  const count = files.filter((f) => !(gitignore && f === '.gitignore')).length
+  if (count === 0) return { kind: 'created', gitignore }
+  if (count > MAX_INITIAL_FILES) {
+    return { kind: 'created', gitignore, note: `${count} файлов — первый коммит не делаю: та ли это папка?` }
+  }
+  return { kind: 'created', gitignore, commit: await commitAll(dir, 'Начало проекта') }
 }
 
 /** Есть ли в проекте CLAUDE.md — постоянная память проекта для Claude. */

@@ -6,12 +6,17 @@ import { loadSettings } from './settings'
 import { hasApiKey } from './secrets'
 import { buildPrompt } from './prompt-builder'
 import {
+  commitAll,
+  commitMessage,
   createCheckpoint,
   detectChecks,
+  ensureRepo,
   hasClaudeMd,
   isEmptyProject,
   runCheck,
-  worktreeFingerprint
+  worktreeFingerprint,
+  type CommitResult,
+  type RepoInit
 } from './quality'
 import { reviewChanges } from './reviewer'
 import { ROLLBACK_PROMPT_PREFIX } from './history-logic'
@@ -62,6 +67,7 @@ const ACTION_KIND: Record<string, ActionKind> = {
   План: 'plan',
   'Точка отката': 'checkpoint',
   Откат: 'checkpoint',
+  Git: 'checkpoint',
   Ответ: 'question'
 }
 
@@ -180,6 +186,8 @@ export class Assistant extends EventEmitter {
   private gateAbort: AbortController | null = null
   /** Сколько раз прерывали — задача, которая ещё готовилась, по нему видит «стоп». */
   private interrupts = 0
+  /** Создание репозитория при открытии проекта: отпечаток и точка отката ждут его. */
+  private repoReady: Promise<void> = Promise.resolve()
 
   /**
    * @param hooks сессия запущена с HTTP-хуком: план и вопросы приходят через него,
@@ -395,7 +403,48 @@ export class Assistant extends EventEmitter {
   private async beginTask(text: string): Promise<void> {
     this.task = newTask()
     this.task.text = text
+    await this.repoReady
     this.task.fingerprint = await worktreeFingerprint(this.session.projectDir)
+  }
+
+  /**
+   * Папка без git получает репозиторий и первый коммит — до первой задачи,
+   * иначе у неё не было бы ни точки отката, ни диффа для ревью.
+   */
+  prepareRepo(): void {
+    if (!loadSettings().autoGit) return
+    this.repoReady = ensureRepo(this.session.projectDir).then(
+      (result) => this.logRepo(result),
+      (err: unknown) => console.error('[assistant] git init:', err)
+    )
+  }
+
+  private logRepo(result: RepoInit): void {
+    if (result.kind === 'exists') return
+    if (result.kind !== 'created') {
+      this.logAction('Git', result.note, result.kind === 'failed')
+      return
+    }
+    this.logAction('Git', `создан репозиторий${result.gitignore ? ' и .gitignore' : ''}`)
+    if (result.note) this.logAction('Git', result.note, true)
+    if (result.commit) this.logCommit(result.commit)
+  }
+
+  /** Задача с правками прошла проверки и ревью — её результат уходит в коммит. */
+  private async commitTask(): Promise<void> {
+    if (!this.task.commitReady || this.task.committed || this.task.fingerprint === null) return
+    if (!loadSettings().autoGit) return
+    this.task.committed = true
+    this.logCommit(await commitAll(this.session.projectDir, commitMessage(this.task.text)))
+  }
+
+  private logCommit(result: CommitResult): void {
+    if (result.kind === 'committed') this.logAction('Git', `коммит ${result.sha}`)
+    else if (result.kind === 'failed') this.logAction('Git', `не закоммитил: ${result.note}`, true)
+    else if (result.kind === 'secrets') {
+      this.logAction('Git', `не закоммитил: похоже на ключ или токен в ${result.files.join(', ')}`, true)
+      this.say('Не стал коммитить: в изменениях похоже на секретный ключ.')
+    }
   }
 
   /**
@@ -638,6 +687,7 @@ export class Assistant extends EventEmitter {
     // Точку отката делаем молча ДО первой команды, которая может что-то поменять;
     // показываем её, только когда правки в задаче подтвердятся.
     if (!readOnly && this.task.pendingCheckpoint === undefined) {
+      await this.repoReady
       this.task.pendingCheckpoint = await createCheckpoint(this.session.projectDir)
     }
 
@@ -651,7 +701,10 @@ export class Assistant extends EventEmitter {
    */
   private async onStop(): Promise<PermissionDecision> {
     const decision = await this.qualityGate()
-    if (!decision) this.finishTurn()
+    if (!decision) {
+      await this.commitTask()
+      this.finishTurn()
+    }
     return decision
   }
 
@@ -682,7 +735,10 @@ export class Assistant extends EventEmitter {
       this.logAction('Точка отката', `${this.checkpoint.slice(0, 8)} — скажите «откати», чтобы вернуть`)
       this.emit('state', this.state)
     }
-    if (!settings.qualityGate) return null
+    if (!settings.qualityGate) {
+      this.task.commitReady = true
+      return null
+    }
 
     if (this.task.gateRounds >= MAX_GATE_ROUNDS) {
       this.logAction('Проверки', `не позеленели за ${MAX_GATE_ROUNDS} попытки — посмотрите сами`, true)
@@ -770,6 +826,7 @@ export class Assistant extends EventEmitter {
         }
       }
     }
+    this.task.commitReady = true
     return null
   }
 
@@ -1060,6 +1117,9 @@ interface TaskState {
   checkpointShown: boolean
   reviewed: boolean
   gateRounds: number
+  /** Правки прошли проверки (или они выключены) — результат можно коммитить. */
+  commitReady: boolean
+  committed: boolean
 }
 
 function newTask(): TaskState {
@@ -1073,7 +1133,9 @@ function newTask(): TaskState {
     fingerprint: null,
     checkpointShown: false,
     reviewed: false,
-    gateRounds: 0
+    gateRounds: 0,
+    commitReady: false,
+    committed: false
   }
 }
 

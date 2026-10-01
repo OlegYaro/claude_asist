@@ -279,6 +279,8 @@ export interface Settings {
   qualityGate: boolean
   /** Перед завершением задачи с правками — независимое ревью субагентом. */
   autoReview: boolean
+  /** Git сам: репозиторий при открытии проекта без git, коммит после зелёных проверок. */
+  autoGit: boolean
   /** Давать согласие на действия Claude автоматически (опасные команды всё равно спросят). */
   autoApprove: boolean
   /** Управление с телефона через Telegram-бота (работает, если задан токен). */
@@ -307,6 +309,7 @@ export const DEFAULT_SETTINGS: Settings = {
   planMode: 'auto',
   qualityGate: true,
   autoReview: true,
+  autoGit: true,
   autoApprove: true,
   telegramEnabled: true,
   telegramChatId: null,
