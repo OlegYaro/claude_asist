@@ -1,0 +1,59 @@
+appId: com.krip.claude-voice-desk
+productName: Claude Voice Desk
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - out/**
+  - package.json
+
+# bridge.js и stt-helper должны лежать рядом как обычные файлы, а не внутри бандла:
+# первый запускается отдельным процессом node из Terminal.app, второй — нативный бинарь.
+extraResources:
+  - from: resources/bridge.js
+    to: bridge.js
+  # Собирается скриптом scripts/build-stt-helper.sh (запускается из npm run build).
+  - from: resources/stt-helper
+    to: stt-helper
+
+# Права на spawn-helper нужно чинить ДО подписи — afterPack идёт как раз перед ней.
+afterPack: scripts/fix-pty-perms.js
+
+asarUnpack:
+  - '**/node_modules/node-pty/**'
+
+# Русская локаль в пакете: без неё macOS считает приложение англоязычным
+# и показывает системные элементы (диалоги, меню «Службы») по-английски.
+electronLanguages: [ru, en]
+
+mac:
+  target:
+    - target: dmg
+      arch: [arm64]
+  icon: build/icon.icns
+  category: public.app-category.developer-tools
+  # Ad-hoc подпись: сертификата разработчика нет, а на Apple Silicon неподписанное
+  # приложение не запустится. Для работы на своём Mac этого достаточно.
+  identity: '-'
+  # Без этих строк macOS молча отказывает: микрофон не спросит разрешения,
+  # а открытие Terminal.app упадёт с errAEEventNotPermitted.
+  extendInfo:
+    CFBundleDevelopmentRegion: ru
+    NSMicrophoneUsageDescription: >-
+      Микрофон нужен, чтобы вы могли голосом описывать задачи для Claude Code.
+      Запись распознаётся на этом компьютере и никуда не отправляется.
+    NSSpeechRecognitionUsageDescription: >-
+      Распознавание речи превращает вашу надиктовку в текст задачи.
+      Обработка выполняется локально.
+    NSAppleEventsUsageDescription: >-
+      Доступ к Terminal.app нужен, чтобы открыть окно с сессией Claude Code,
+      за которой вы можете наблюдать и в которую можете вмешаться.
+  # Hardened runtime нужен только для нотаризации; с ad-hoc подписью он лишь
+  # мешает (dyld отказывается грузить нативный модуль node-pty).
+  hardenedRuntime: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}

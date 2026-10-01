@@ -1,0 +1,37 @@
+{
+  "name": "claude-voice-desk",
+  "version": "0.1.0",
+  "description": "Голосовое управление Claude Code — desktop-обёртка над Claude Code CLI",
+  "private": true,
+  "author": "krip",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "npm run build:stt && electron-vite build",
+    "build:stt": "bash scripts/build-stt-helper.sh",
+    "dist": "npm run build && electron-builder --mac --arm64",
+    "icon": "bash scripts/make-icon.sh",
+    "app": "npm run build && electron-builder --mac --arm64 --dir && bash scripts/install-app.sh",
+    "test": "node --test --disable-warning=MODULE_TYPELESS_PACKAGE_JSON \"src/**/*.test.ts\"",
+    "typecheck":"tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "postinstall": "electron-builder install-app-deps && node scripts/fix-pty-perms.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.116.0",
+    "node-pty": "^1.1.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^43.3.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.6"
+  }
+}
