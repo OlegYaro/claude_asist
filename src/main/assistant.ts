@@ -426,7 +426,6 @@ export class Assistant extends EventEmitter {
       return
     }
     this.logAction('Git', `создан репозиторий${result.gitignore ? ' и .gitignore' : ''}`)
-    if (result.note) this.logAction('Git', result.note, true)
     if (result.commit) this.logCommit(result.commit)
   }
 
@@ -441,6 +440,13 @@ export class Assistant extends EventEmitter {
   private logCommit(result: CommitResult): void {
     if (result.kind === 'committed') this.logAction('Git', `коммит ${result.sha}`)
     else if (result.kind === 'failed') this.logAction('Git', `не закоммитил: ${result.note}`, true)
+    else if (result.kind === 'too-many') {
+      this.logAction(
+        'Git',
+        `не закоммитил: ${result.count} новых файлов — та ли это папка? Лишнее добавьте в .gitignore`,
+        true
+      )
+    }
     else if (result.kind === 'secrets') {
       this.logAction('Git', `не закоммитил: похоже на ключ или токен в ${result.files.join(', ')}`, true)
       this.say('Не стал коммитить: в изменениях похоже на секретный ключ.')

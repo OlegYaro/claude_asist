@@ -258,3 +258,39 @@ test('commitAll: секрет в самом первом коммите — ин
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('commitAll: слишком много новых файлов — не коммитит и ничего не добавляет в индекс', async () => {
+  const dir = tempDir()
+  try {
+    writeFileSync(join(dir, 'a.txt'), 'a')
+    await ensureRepo(dir, '/nonexistent-home')
+    for (let i = 0; i < 4; i++) writeFileSync(join(dir, `f${i}.txt`), String(i))
+
+    assert.deepEqual(await commitAll(dir, 'много', 3), { kind: 'too-many', count: 4 })
+    assert.equal(git(dir, 'diff', '--cached', '--name-only'), '')
+    assert.equal((await commitAll(dir, 'в пределах', 4)).kind, 'committed')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('commitAll: дифф больше 16 МБ не ломает проверку секретов', async () => {
+  const dir = tempDir()
+  try {
+    // ~17 МБ текста в одном файле и ещё сотни файлов — вместе больше лимита вывода git().
+    writeFileSync(join(dir, 'big.json'), 'x'.repeat(100).concat('\n').repeat(170_000))
+    for (let i = 0; i < 300; i++) writeFileSync(join(dir, `m${i}.txt`), 'line\n'.repeat(2000))
+    writeFileSync(join(dir, 'small.ts'), `const k = '${FAKE_ANTHROPIC}'\n`)
+    writeFileSync(join(dir, '.gitignore'), '')
+
+    const first = await ensureRepo(dir, '/nonexistent-home')
+    assert.ok(first.kind === 'created')
+    assert.deepEqual(first.commit, { kind: 'secrets', files: ['small.ts'] })
+
+    writeFileSync(join(dir, 'small.ts'), 'const k = process.env.KEY\n')
+    assert.equal((await commitAll(dir, 'без секрета')).kind, 'committed')
+    assert.equal(git(dir, 'status', '--porcelain'), '')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

@@ -305,8 +305,12 @@ export const DEFAULT_GITIGNORE = [
   ''
 ].join('\n')
 
-/** Больше файлов в первом коммите — скорее всего, открыта не папка проекта. */
-const MAX_INITIAL_FILES = 5000
+/** Больше новых файлов за один коммит — скорее всего, открыта не папка проекта. */
+const MAX_NEW_FILES = 5000
+/** Файлы крупнее — сгенерированные (lock, данные): их не сканируем, иначе дифф не влезет в память. */
+const SECRET_SCAN_MAX_BYTES = 1024 * 1024
+/** Сколько файлов в одном `git diff` при поиске секретов — вывод каждого вызова ограничен. */
+const SECRET_SCAN_BATCH = 200
 
 /** Автор коммитов, если у пользователя git-имя не настроено (иначе commit падает). */
 const FALLBACK_IDENTITY = ['-c', 'user.name=Claude Voice Desk', '-c', 'user.email=voice-desk@localhost']
@@ -362,7 +366,41 @@ export type CommitResult =
   | { kind: 'committed'; sha: string }
   | { kind: 'clean' }
   | { kind: 'secrets'; files: string[] }
+  /** Новых файлов больше порога — коммит не делали, индекс не трогали. */
+  | { kind: 'too-many'; count: number }
   | { kind: 'failed'; note: string }
+
+/**
+ * Секреты в добавляемом — пачками файлов, чтобы вывод каждого `git diff` был
+ * ограничен; крупные файлы пропускаем. null — git не ответил.
+ */
+async function scanStagedSecrets(dir: string, staged: string[]): Promise<string[] | null> {
+  const files = staged.filter((file) => {
+    try {
+      return statSync(join(dir, file)).size <= SECRET_SCAN_MAX_BYTES
+    } catch {
+      return false // удалённый файл: добавленных строк нет
+    }
+  })
+  const found: string[] = []
+  for (let i = 0; i < files.length; i += SECRET_SCAN_BATCH) {
+    const diff = await git(dir, [
+      '--literal-pathspecs',
+      '-c',
+      'core.quotePath=false',
+      'diff',
+      '--cached',
+      '-U0',
+      '--no-color',
+      '--no-ext-diff',
+      '--',
+      ...files.slice(i, i + SECRET_SCAN_BATCH)
+    ])
+    if (diff === null) return null
+    found.push(...findSecrets(diff))
+  }
+  return found
+}
 
 /** Снимает всё с индекса — и когда коммитов ещё нет (тогда `git reset` не работает). */
 async function unstageAll(dir: string): Promise<void> {
@@ -375,18 +413,27 @@ async function unstageAll(dir: string): Promise<void> {
  * нашли — индекс возвращаем как был до `add`, файлы не трогаем. Хуки git
  * пользователя (pre-commit) выполняются.
  */
-export async function commitAll(dir: string, message: string): Promise<CommitResult> {
+export async function commitAll(
+  dir: string,
+  message: string,
+  maxNewFiles: number = MAX_NEW_FILES
+): Promise<CommitResult> {
+  // До `add`: если открыли не ту папку (~/Documents), тысячи файлов не попадут даже в индекс.
+  const untracked = await git(dir, ['ls-files', '--others', '--exclude-standard', '-z'])
+  if (untracked === null) return { kind: 'failed', note: 'не удалось прочитать файлы проекта' }
+  const count = untracked.split('\0').filter(Boolean).length
+  if (count > maxNewFiles) return { kind: 'too-many', count }
+
   if ((await git(dir, ['add', '-A'])) === null) return { kind: 'failed', note: 'git add не удался' }
-  const staged = await git(dir, ['diff', '--cached', '--name-only'])
+  const staged = await git(dir, ['diff', '--cached', '--name-only', '-z'])
   if (staged === null) return { kind: 'failed', note: 'не удалось прочитать изменения' }
   if (!staged) return { kind: 'clean' }
 
-  const diff = await git(dir, ['diff', '--cached', '-U0', '--no-color', '--no-ext-diff'])
-  if (diff === null) {
+  const secrets = await scanStagedSecrets(dir, staged.split('\0').filter(Boolean))
+  if (secrets === null) {
     await unstageAll(dir)
     return { kind: 'failed', note: 'не удалось проверить изменения на секреты' }
   }
-  const secrets = findSecrets(diff)
   if (secrets.length) {
     await unstageAll(dir)
     return { kind: 'secrets', files: secrets }
@@ -405,8 +452,8 @@ export type RepoInit =
   | { kind: 'exists' }
   | { kind: 'skipped'; note: string }
   | { kind: 'failed'; note: string }
-  /** `commit` нет — первый коммит не делали (пустая папка или слишком много файлов). */
-  | { kind: 'created'; gitignore: boolean; commit?: CommitResult; note?: string }
+  /** `commit` нет — папка пустая, коммитить нечего. */
+  | { kind: 'created'; gitignore: boolean; commit?: CommitResult }
 
 /** Папка без git → репозиторий, `.gitignore` (если его нет) и первый коммит. */
 export async function ensureRepo(dir: string, home: string = homedir()): Promise<RepoInit> {
@@ -428,11 +475,7 @@ export async function ensureRepo(dir: string, home: string = homedir()): Promise
   const untracked = await git(dir, ['ls-files', '--others', '--exclude-standard', '-z'])
   // Наш свежий .gitignore не в счёт: в пустой папке коммитить пока нечего.
   const files = untracked ? untracked.split('\0').filter(Boolean) : []
-  const count = files.filter((f) => !(gitignore && f === '.gitignore')).length
-  if (count === 0) return { kind: 'created', gitignore }
-  if (count > MAX_INITIAL_FILES) {
-    return { kind: 'created', gitignore, note: `${count} файлов — первый коммит не делаю: та ли это папка?` }
-  }
+  if (files.every((f) => gitignore && f === '.gitignore')) return { kind: 'created', gitignore }
   return { kind: 'created', gitignore, commit: await commitAll(dir, 'Начало проекта') }
 }
 
