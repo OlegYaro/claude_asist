@@ -7,7 +7,7 @@ import {
   promptText
 } from './history-logic.ts'
 
-const ID = '8fffda96-9270-4c8c-b120-c4da772c1005'
+const ID = '11111111-2222-4333-8444-555555555555'
 let clock = Date.parse('2026-10-01T10:00:00Z')
 
 function at(): string {

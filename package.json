@@ -4,6 +4,14 @@
   "description": "Голосовое управление Claude Code — desktop-обёртка над Claude Code CLI",
   "private": true,
   "author": "krip",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OlegYaro/claude_asist.git"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
