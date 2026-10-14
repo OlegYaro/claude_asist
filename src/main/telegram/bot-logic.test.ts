@@ -49,6 +49,7 @@ function info(patch: Partial<SessionInfo> = {}, assistant: Partial<AssistantStat
     terminalAttached: false,
     assistant: { ...ASSISTANT, ...assistant },
     pluginRequest: null,
+    limits: null,
     ...patch
   }
 }

@@ -27,7 +27,12 @@ export interface SessionInfo {
   assistant: AssistantState
   /** Плагин, который Claude просит подключить (с перезапуском сессии); null — не просит. */
   pluginRequest: PluginRequest | null
+  /** Оценка расхода лимита этой сессией; null — данных ещё нет. */
+  limits: LimitsSnapshot | null
 }
+
+import type { LimitsSnapshot } from './limit-estimate.ts'
+export type { LimitsSnapshot }
 
 export interface PluginRequest {
   id: string
@@ -255,7 +260,7 @@ export type TranscriptEvent =
    * Расход токенов одного ответа. tools — имена его инструментов (пустой список —
    * ответ без инструментов); у ревью и проверок приложения — служебные имена вроде 'Ревью'.
    */
-  | { kind: 'usage'; messageId: string; tools: string[]; usage: TokenUsage; at: number }
+  | { kind: 'usage'; messageId: string; tools: string[]; usage: TokenUsage; at: number; model?: string | null }
 
 // ───────────────────────── Настройки ─────────────────────────
 
@@ -323,6 +328,8 @@ export interface Settings {
   telegramChatId: number | null
   /** Показывать слева панель «История» с прошлыми сессиями проекта. */
   historyOpen: boolean
+  /** Калибровка оценки лимита: проценты лимита на доллар расхода, свежие последними. */
+  limitRatios: number[]
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -349,7 +356,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoApprove: true,
   telegramEnabled: true,
   telegramChatId: null,
-  historyOpen: true
+  historyOpen: true,
+  limitRatios: []
 }
 
 // ───────────────────────── Озвучка ─────────────────────────

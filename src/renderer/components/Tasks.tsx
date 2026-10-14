@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { ActionKind, TodoItem, TokenUsage, ToolTask } from '../../shared/types'
+import type { ActionKind, LimitsSnapshot, TodoItem, TokenUsage, ToolTask } from '../../shared/types'
 import { TOOL_LABEL, kindOf } from '../../shared/action-kind'
 import { KIND } from '../actionKinds'
 import TokenChart from './TokenChart'
@@ -7,7 +7,8 @@ import TokenChart from './TokenChart'
 interface Props {
   tasks: ToolTask[]
   todos: TodoItem[]
-  usage: Record<string, { tools: string[]; usage: TokenUsage }>
+  usage: Record<string, { tools: string[]; usage: TokenUsage; model?: string | null }>
+  limits: LimitsSnapshot | null
 }
 
 const STATE_MARK: Record<ToolTask['state'], string> = {
@@ -71,7 +72,7 @@ function timeLabel(at: number): string {
   return new Date(at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
 }
 
-export default function Tasks({ tasks, todos, usage }: Props): React.JSX.Element {
+export default function Tasks({ tasks, todos, usage, limits }: Props): React.JSX.Element {
   const [filter, setFilter] = useState<Filter>('all')
   const groups = useMemo(() => groupByTask(tasks), [tasks])
   // Раскрытые группы (список действий рендерим только у них) и строки с подробностями.
@@ -194,7 +195,7 @@ export default function Tasks({ tasks, todos, usage }: Props): React.JSX.Element
         )}
       </div>
 
-      <TokenChart usage={usage} />
+      <TokenChart usage={usage} limits={limits} />
     </aside>
   )
 }

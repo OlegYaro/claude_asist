@@ -249,7 +249,7 @@ export default function App(): React.JSX.Element {
           }
           voiceSlot={voiceSlot}
         />
-        <Tasks tasks={tasks} todos={todos} usage={usage} />
+        <Tasks tasks={tasks} todos={todos} usage={usage} limits={info.limits} />
       </main>
       {projectOpen && (
         <ProjectDrawer

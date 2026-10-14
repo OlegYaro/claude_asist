@@ -17,7 +17,7 @@ interface State {
   tasks: ToolTask[]
   todos: TodoItem[]
   /** Расход токенов по id ответа модели. */
-  usage: Record<string, { tools: string[]; usage: TokenUsage }>
+  usage: Record<string, { tools: string[]; usage: TokenUsage; model?: string | null }>
   error: AppError | null
 }
 
@@ -93,7 +93,7 @@ function applyTranscript(state: State, event: TranscriptEvent): State {
 
     case 'usage': {
       // Запись ответа заменяется целиком: транскрипт может дописывать usage по тому же id.
-      const next = { ...state.usage, [event.messageId]: { tools: event.tools, usage: event.usage } }
+      const next = { ...state.usage, [event.messageId]: { tools: event.tools, usage: event.usage, model: event.model } }
       const ids = Object.keys(next)
       if (ids.length > MAX_USAGE) for (const id of ids.slice(0, ids.length - MAX_USAGE)) delete next[id]
       return { ...state, usage: next }

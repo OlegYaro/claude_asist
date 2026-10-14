@@ -572,7 +572,14 @@ export class TranscriptTailer extends EventEmitter {
       const oldest = this.usageTools.keys().next().value
       if (oldest !== undefined) this.usageTools.delete(oldest)
     }
-    this.emitEvent({ kind: 'usage', messageId, tools: [...acc], usage, at: ts })
+    this.emitEvent({
+      kind: 'usage',
+      messageId,
+      tools: [...acc],
+      usage,
+      at: ts,
+      model: typeof m['model'] === 'string' ? m['model'] : null
+    })
   }
 
   /**

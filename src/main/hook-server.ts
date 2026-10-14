@@ -1,6 +1,6 @@
 import http from 'node:http'
 import { randomBytes } from 'node:crypto'
-import { enabledPluginsSetting } from '../shared/plugins'
+import { enabledPluginsSetting } from '../shared/plugins.ts'
 
 /** Вход хуков — то, что Claude Code присылает POST-запросом. */
 export interface PermissionRequestInput {
@@ -29,6 +29,14 @@ export type PermissionDecision =
 
 export type PermissionHandler = (input: PermissionRequestInput) => Promise<PermissionDecision>
 
+/** Лимиты подписки из JSON статус-строки Claude Code (`rate_limits`); окна может не быть. */
+export interface RateLimitsStatus {
+  sessionId: string
+  fiveHour: { usedPercentage: number; resetsAt: number } | null
+}
+
+export type StatusHandler = (status: RateLimitsStatus) => void
+
 /**
  * Принимает HTTP-хуки Claude Code. Запросы на разрешение приходят сюда, а не
  * в виде диалога в терминале, поэтому приложение может само дать согласие
@@ -42,6 +50,7 @@ export class HookServer {
   private port = 0
   private readonly token = randomBytes(16).toString('hex')
   private readonly handlers = new Map<string, PermissionHandler>()
+  private statusHandler: StatusHandler | null = null
 
   async start(): Promise<void> {
     if (this.server) return
@@ -56,6 +65,11 @@ export class HookServer {
     const addr = server.address()
     this.port = typeof addr === 'object' && addr ? addr.port : 0
     this.server = server
+  }
+
+  /** Получатель данных статус-строки (процент лимита); один на приложение. */
+  onStatus(handler: StatusHandler | null): void {
+    this.statusHandler = handler
   }
 
   /** Обработчик для конкретной сессии Claude (по session_id). */
@@ -91,12 +105,19 @@ export class HookServer {
       command: `curl -s -X POST -H 'Content-Type: application/json' --data-binary @- --max-time 3500 ${url}`,
       timeout: 3600
     }
+    // Статус-строка нужна не для показа: Claude Code передаёт ей процент лимита подписки.
+    // Ответ пустой, так что строка в терминале остаётся пустой.
+    const statusLine = {
+      type: 'command',
+      command: `curl -s -X POST -H 'Content-Type: application/json' --data-binary @- --max-time 5 http://127.0.0.1:${this.port}/status/${this.token}`
+    }
     return JSON.stringify({
       // Серая подсказка следующей фразы в поле ввода склеивалась с нашим текстом,
       // Claude Code видел невидимый символ и вместо отправки просил «review and
       // press Enter» — команда стояла неотправленной. Советы под спиннером — шум.
       promptSuggestionEnabled: false,
       spinnerTipsEnabled: false,
+      statusLine,
       // Плагины, выключенные в пользовательских настройках, включаются точечно на сессию.
       enabledPlugins: enabledPluginsSetting(plugins),
       hooks: {
@@ -112,7 +133,8 @@ export class HookServer {
   }
 
   private async onRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    if (req.method !== 'POST' || req.url !== `/hook/${this.token}`) {
+    const isStatus = req.url === `/status/${this.token}`
+    if (req.method !== 'POST' || (req.url !== `/hook/${this.token}` && !isStatus)) {
       res.writeHead(404).end()
       return
     }
@@ -125,6 +147,17 @@ export class HookServer {
         res.writeHead(413).end()
         return
       }
+    }
+
+    if (isStatus) {
+      try {
+        const status = parseRateLimits(JSON.parse(body))
+        if (status) this.statusHandler?.(status)
+      } catch {
+        // Не JSON — игнорируем: строка статуса всё равно пустая.
+      }
+      res.writeHead(200).end('')
+      return
     }
 
     let decision: PermissionDecision = null
@@ -164,4 +197,21 @@ export class HookServer {
     this.server?.close()
     this.server = null
   }
+}
+
+/** Достаёт из JSON статус-строки id сессии и 5-часовое окно лимита; чужую форму отбрасывает. */
+export function parseRateLimits(raw: unknown): RateLimitsStatus | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const r = raw as Record<string, unknown>
+  if (typeof r['session_id'] !== 'string') return null
+  const limits = r['rate_limits']
+  const five = typeof limits === 'object' && limits !== null ? (limits as Record<string, unknown>)['five_hour'] : null
+  let fiveHour: RateLimitsStatus['fiveHour'] = null
+  if (typeof five === 'object' && five !== null) {
+    const f = five as Record<string, unknown>
+    if (typeof f['used_percentage'] === 'number' && typeof f['resets_at'] === 'number') {
+      fiveHour = { usedPercentage: f['used_percentage'], resetsAt: f['resets_at'] }
+    }
+  }
+  return { sessionId: r['session_id'], fiveHour }
 }

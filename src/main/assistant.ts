@@ -1159,7 +1159,9 @@ export class Assistant extends EventEmitter {
       messageId: `review:${++this.reviewSeq}`,
       tools: [tool],
       usage,
-      at: Date.now()
+      at: Date.now(),
+      // Проверка полноты идёт на sonnet, ревью — на модели по умолчанию; для оценки лимита цена приближённая.
+      model: 'sonnet'
     } satisfies TranscriptEvent)
   }
 

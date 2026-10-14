@@ -6,11 +6,12 @@ import { TerminalBridge, TerminalAutomationDeniedError } from './terminal-bridge
 import { TranscriptTailer, findTranscript } from './transcript'
 import { HookServer } from './hook-server'
 import { Assistant } from './assistant'
-import { loadSettings, rememberProject } from './settings'
+import { loadSettings, rememberProject, saveSettings } from './settings'
 import { fileDiff, projectChanges, projectOverview } from './project-info'
 import { listSessions, sessionTranscript } from './history'
 import { modelLabel } from '../shared/model-label'
 import { findPlugin, parsePluginRequest } from '../shared/plugins'
+import { LimitTracker, usageCostUsd } from '../shared/limit-estimate'
 import type {
   AppError,
   AssistantState,
@@ -53,6 +54,8 @@ export class SessionManager extends EventEmitter {
   private assistant: Assistant | null = null
   private unregisterHook: (() => void) | null = null
   private readonly hooks = new HookServer()
+  /** Оценка расхода 5-часового лимита; калибровка хранится в настройках. */
+  private limits: LimitTracker | null = null
   /** Плагины, включённые на этой сессии (кнопка «подключить»); сбрасываются со сменой проекта. */
   private readonly enabledPlugins = new Set<string>()
   private pluginRequest: string | null = null
@@ -77,7 +80,8 @@ export class SessionManager extends EventEmitter {
       model: this.model,
       terminalAttached: (this.bridge?.attachedCount ?? 0) > 0,
       assistant: this.assistant?.state ?? IDLE_ASSISTANT,
-      pluginRequest: this.requestedPlugin()
+      pluginRequest: this.requestedPlugin(),
+      limits: this.limitTracker().snapshot()
     }
   }
 
@@ -104,6 +108,7 @@ export class SessionManager extends EventEmitter {
 
     if (this.session?.projectDir !== projectDir) this.enabledPlugins.clear()
     this.pluginRequest = null
+    const previousId = this.session?.sessionId
     await this.stop()
 
     const settings = loadSettings()
@@ -113,6 +118,7 @@ export class SessionManager extends EventEmitter {
     let extraArgs: string[] = []
     try {
       await this.hooks.start()
+      this.hooks.onStatus((status) => this.onRateLimits(status.sessionId, status.fiveHour))
       extraArgs = ['--settings', this.hooks.settingsJson(this.enabledPlugins)]
     } catch {
       extraArgs = []
@@ -134,6 +140,8 @@ export class SessionManager extends EventEmitter {
       ...(resumeId ? { resumeId } : {})
     })
     this.session = session
+    // Другая сессия — её расход считаем с нуля; перезапуск той же (плагин) не сбрасывает.
+    if (previousId !== session.sessionId) this.limitTracker().resetSession()
     this.permissionMode = settings.permissionMode
     this.title = null
     this.model = null
@@ -148,7 +156,10 @@ export class SessionManager extends EventEmitter {
       if (state.phase === 'executing' || state.phase === 'planning') this.pluginRequest = null
       this.pushSession()
     })
-    assistant.on('action', (event: TranscriptEvent) => this.emit('transcript', event))
+    assistant.on('action', (event: TranscriptEvent) => {
+      this.trackUsage(event)
+      this.emit('transcript', event)
+    })
     assistant.on('say', (text: string) => this.emit('say', text))
     assistant.prepareRepo()
     this.unregisterHook = this.hooks.register(session.sessionId, (input) =>
@@ -357,6 +368,7 @@ export class SessionManager extends EventEmitter {
         default:
           break
       }
+      this.trackUsage(event)
       this.assistant?.onTranscript(event)
       this.emit(
         'transcript',
@@ -432,6 +444,30 @@ export class SessionManager extends EventEmitter {
   dismissPluginRequest(): void {
     if (this.pluginRequest === null) return
     this.pluginRequest = null
+    this.pushSession()
+  }
+
+  private limitTracker(): LimitTracker {
+    this.limits ??= new LimitTracker(loadSettings().limitRatios)
+    return this.limits
+  }
+
+  /** Расход каждого ответа (и ревью) — в оценку доли лимита. */
+  private trackUsage(event: TranscriptEvent): void {
+    if (event.kind !== 'usage') return
+    this.limitTracker().addUsage(event.messageId, usageCostUsd(event.usage, event.model), event.at)
+  }
+
+  /** Процент лимита из статус-строки Claude Code этой сессии. */
+  private onRateLimits(sessionId: string, fiveHour: { usedPercentage: number; resetsAt: number } | null): void {
+    if (!fiveHour || sessionId !== this.session?.sessionId) return
+    const tracker = this.limitTracker()
+    const before = tracker.calibration
+    tracker.observe(fiveHour.usedPercentage, fiveHour.resetsAt)
+    const after = tracker.calibration
+    if (after.length !== before.length || after.some((v, i) => v !== before[i])) {
+      saveSettings({ limitRatios: after })
+    }
     this.pushSession()
   }
 
