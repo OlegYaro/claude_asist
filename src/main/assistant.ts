@@ -33,6 +33,7 @@ import {
 } from '../shared/intents'
 import { answerFor, parseQuestions, type QuestionItem } from './questions'
 import { parsePluginRequest } from '../shared/plugins'
+import { isTuiReady } from './tui-ready'
 import type {
   ActionKind,
   AssistantPhase,
@@ -167,6 +168,8 @@ export class Assistant extends EventEmitter {
 
   private screen = ''
   private trustAnswered = false
+  /** Пока идёт ответ на диалог доверия, экран с его рамкой не считается готовым. */
+  private trustPending = false
   private queue: string[] = []
   private actionSeq = 0
   private reviewSeq = 0
@@ -1072,11 +1075,16 @@ export class Assistant extends EventEmitter {
     // Вы сами выбрали эту папку в приложении — это и есть согласие на доверие.
     if (!this.trustAnswered && this.screen.includes('Itrustthisfolder')) {
       this.trustAnswered = true
-      void this.answerTrust()
+      this.trustPending = true
+      void this.answerTrust().finally(() => {
+        this.trustPending = false
+        // Рамка закрытого диалога не должна сойти за поле ввода.
+        this.screen = ''
+      })
       return
     }
 
-    if (this.screen.includes('shift+tabtocycle') || this.screen.includes('forshortcuts')) {
+    if (!this.trustPending && isTuiReady(this.screen)) {
       const dir = this.session.projectDir
       this.needsInit = !hasClaudeMd(dir) && !isEmptyProject(dir)
       this.setPhase('ready')
