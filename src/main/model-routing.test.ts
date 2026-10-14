@@ -37,10 +37,11 @@ test('parsePlanModels: дефис и тире, заголовок с жирны�
   ])
 })
 
-test('escalate: ступенька вверх, opus — потолок', () => {
+test('escalate: ступенька вверх, fable — потолок', () => {
   assert.equal(escalate('haiku'), 'sonnet')
   assert.equal(escalate('sonnet'), 'opus')
-  assert.equal(escalate('opus'), 'opus')
+  assert.equal(escalate('opus'), 'fable')
+  assert.equal(escalate('fable'), 'fable')
 })
 
 test('planEscalations: от модели шага, повторный круг — выше', () => {
@@ -50,6 +51,12 @@ test('planEscalations: от модели шага, повторный круг �
     { step: 1, title: 'Найти места использования', what: 'не найдено', model: 'sonnet' }
   ])
   assert.equal(planEscalations([{ step: 1, what: 'снова' }], steps, tried)[0]!.model, 'opus')
+})
+
+test('parsePlanModels: fable как модель шага', () => {
+  assert.deepEqual(parsePlanModels('## Модели\n1. Спроектировать — fable'), [
+    { n: 1, text: 'Спроектировать', model: 'fable' }
+  ])
 })
 
 test('planEscalations: пункт вне шагов — сильнее исполнителя сессии', () => {

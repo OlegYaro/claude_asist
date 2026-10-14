@@ -9,6 +9,7 @@ test('modelLabel: версии и даты', () => {
   assert.equal(modelLabel('claude-haiku-4-5-20251001'), 'Haiku 4.5')
   assert.equal(modelLabel('claude-opus-5'), 'Opus 5')
   assert.equal(modelLabel('opus'), 'Opus')
+  assert.equal(modelLabel('fable'), 'Fable')
 })
 
 test('modelLabel: незнакомый id как есть, служебный — не модель', () => {

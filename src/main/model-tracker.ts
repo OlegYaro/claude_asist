@@ -10,18 +10,24 @@ import { modelLabel } from '../shared/model-label.ts'
 export class ModelTracker {
   private main: string | null = null
   private agents = new Map<string, string>()
+  /** Полный id по семейству, виденный в основной цепочке: `sonnet` → `claude-sonnet-5-5`. */
+  private versions = new Map<string, string>()
 
   /** Запись основной цепочки; служебный `<synthetic>` модель не затирает. */
   setMain(model: unknown): string | null {
     if (typeof model !== 'string' || !modelLabel(model)) return null
     this.main = model
+    const family = /^claude-([a-z]+)-\d/.exec(model)?.[1]
+    if (family) this.versions.set(family, model)
     return this.current()
   }
 
   /** Субагент запущен; без `model` он идёт на модели сессии — показывать нечего. */
   agentStart(toolUseId: string, model: unknown): string | null {
     if (typeof model !== 'string' || !modelLabel(model)) return null
-    this.agents.set(toolUseId, model)
+    // Алиас без версии (`sonnet`) подменяем полным id, если такая модель уже работала в сессии:
+    // иначе шапка с «Sonnet 5.5» на время шага превращалась в просто «Sonnet».
+    this.agents.set(toolUseId, this.versions.get(model) ?? model)
     return this.current()
   }
 

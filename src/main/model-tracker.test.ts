@@ -48,3 +48,10 @@ test('прерывание хода сбрасывает субагентов', 
   assert.equal(t.reset(), 'claude-sonnet-5-5')
   assert.equal(t.reset(), null)
 })
+
+test('алиас субагента получает версию, если эта модель уже работала в сессии', () => {
+  const t = new ModelTracker()
+  t.setMain('claude-sonnet-5-5')
+  assert.equal(t.agentStart('a1', 'sonnet'), 'claude-sonnet-5-5')
+  assert.equal(t.agentStart('a2', 'fable'), 'fable')
+})

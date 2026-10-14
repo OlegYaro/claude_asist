@@ -4,7 +4,7 @@
  * отдаёт на ступень более сильной модели. Чистая логика без Electron — с тестами.
  */
 
-export type StepModel = 'haiku' | 'sonnet' | 'opus'
+export type StepModel = 'haiku' | 'sonnet' | 'opus' | 'fable'
 
 export interface PlanStep {
   n: number
@@ -25,8 +25,8 @@ export interface Escalation {
   model: StepModel
 }
 
-/** Ступени по силе; выше opus не поднимаемся. */
-const LADDER: StepModel[] = ['haiku', 'sonnet', 'opus']
+/** Ступени по силе; выше fable не поднимаемся. */
+const LADDER: StepModel[] = ['haiku', 'sonnet', 'opus', 'fable']
 
 /** Модель, на которой исполняется задача без явного шага: исполнительная часть `opusplan`. */
 const EXECUTOR_MODEL: StepModel = 'sonnet'
@@ -36,7 +36,7 @@ export function escalate(model: StepModel): StepModel {
 }
 
 const HEADING = /^\s*#{1,6}\s+(.*)$/
-const STEP = /^\s*(\d+)[.)]\s+(.+?)\s*[—–-]+\s*\**`?(haiku|sonnet|opus)`?\**\s*\.?\s*$/i
+const STEP = /^\s*(\d+)[.)]\s+(.+?)\s*[—–-]+\s*\**`?(haiku|sonnet|opus|fable)`?\**\s*\.?\s*$/i
 
 /**
  * Шаги из раздела «## Модели» плана: строки `1. что сделать — sonnet`.
