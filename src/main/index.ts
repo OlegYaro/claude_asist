@@ -213,7 +213,9 @@ function registerIpc(): void {
   ipcMain.handle('settings:get', (): Settings => loadSettings())
   ipcMain.handle('settings:set', (_e, patch: Partial<Settings>): Settings => {
     if (patch.speak === false || patch.speakReplies === false) speaker.stop()
-    return saveSettings(patch)
+    const saved = saveSettings(patch)
+    if ('autoModel' in patch || 'sessionModel' in patch) void sessions.applyModelSetting()
+    return saved
   })
   ipcMain.handle('speech:stop', (): void => speaker.stop())
   ipcMain.handle('speech:voices', (): Promise<string[]> => voices.refresh())

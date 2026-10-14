@@ -75,6 +75,11 @@ export class ClaudeSession extends EventEmitter {
     return this.opts.autoModel
   }
 
+  /** Модель (`--model`), с которой сессия запущена; null — по умолчанию. */
+  get launchedModel(): string | null {
+    return this.opts.model
+  }
+
   get isRunning(): boolean {
     return this.proc !== null && !this.exited
   }

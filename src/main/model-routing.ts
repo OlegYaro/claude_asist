@@ -95,3 +95,9 @@ export function completionReason(escalations: Escalation[]): string {
     'Доделай только это. Дождись результата субагентов, затем снова запусти проверки проекта и коротко отчитайся.'
   ].join('\n')
 }
+
+/** Значение `--model` для сессии по настройкам: автовыбор — `opusplan`, `default` — без флага. */
+export function launchModel(settings: { autoModel: boolean; sessionModel: string }): string | null {
+  if (settings.autoModel) return 'opusplan'
+  return settings.sessionModel === 'default' ? null : settings.sessionModel
+}

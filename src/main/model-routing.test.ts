@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { completionReason, escalate, parsePlanModels, planEscalations, type StepModel } from './model-routing.ts'
+import { completionReason, escalate, launchModel, parsePlanModels, planEscalations, type StepModel } from './model-routing.ts'
 
 const PLAN = `# План
 
@@ -72,4 +72,10 @@ test('completionReason: шаг, модель и указание доделат�
   assert.match(text, /Шаг 2 «Реализовать парсер»: нет обработки ошибок/)
   assert.match(text, /Вне шагов плана: нет тестов/)
   assert.match(text, /model: "opus"/)
+})
+
+test('launchModel: автовыбор, ручная модель и «по умолчанию»', () => {
+  assert.equal(launchModel({ autoModel: true, sessionModel: 'haiku' }), 'opusplan')
+  assert.equal(launchModel({ autoModel: false, sessionModel: 'haiku' }), 'haiku')
+  assert.equal(launchModel({ autoModel: false, sessionModel: 'default' }), null)
 })

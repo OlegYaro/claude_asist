@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { stat } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { ClaudeSession, ClaudeNotFoundError } from './claude-runtime'
+import { launchModel } from './model-routing'
 import { TerminalBridge, TerminalAutomationDeniedError } from './terminal-bridge'
 import { TranscriptTailer, findTranscript } from './transcript'
 import { HookServer } from './hook-server'
@@ -61,6 +62,8 @@ export class SessionManager extends EventEmitter {
   private pluginRequest: string | null = null
   /** Идёт перезапуск ради плагина — повторный вызов (двойной клик, Telegram) не нужен. */
   private restarting = false
+  /** Модель в настройках сменили посреди задачи — перезапуск после её конца. */
+  private modelChangePending = false
 
   private status: SessionStatus = 'stopped'
   private title: string | null = null
@@ -133,7 +136,7 @@ export class SessionManager extends EventEmitter {
       claudeBinPath: settings.claudeBinPath,
       // Автовыбор: план на Opus, исполнение на Sonnet (`opusplan`), шаги — субагентами
       // на моделях из плана. Иначе — модель, выбранная вручную.
-      model: settings.autoModel ? 'opusplan' : settings.sessionModel === 'default' ? null : settings.sessionModel,
+      model: launchModel(settings),
       autoModel: settings.autoModel,
       extraArgs,
       enabledPlugins: [...this.enabledPlugins],
@@ -154,6 +157,7 @@ export class SessionManager extends EventEmitter {
     assistant.on('state', (state: AssistantState) => {
       // Новый ход (в окне, в терминале или с телефона) — старая просьба уже не про него.
       if (state.phase === 'executing' || state.phase === 'planning') this.pluginRequest = null
+      if (state.phase === 'ready' && this.modelChangePending) void this.applyModelSetting()
       this.pushSession()
     })
     assistant.on('action', (event: TranscriptEvent) => {
@@ -435,6 +439,39 @@ export class SessionManager extends EventEmitter {
       // start() сам сообщил причину; плагин при неудаче не считаем подключённым.
       this.enabledPlugins.delete(plugin.id)
       throw err
+    } finally {
+      this.restarting = false
+    }
+  }
+
+  /**
+   * Модель задаётся при запуске `claude`, поэтому смена в настройках касалась бы
+   * только следующей сессии. Если она изменилась — перезапускаем ту же сессию
+   * (`--resume`); посреди задачи ждём её конца, чтобы не оборвать работу.
+   */
+  async applyModelSetting(): Promise<void> {
+    const session = this.session
+    if (!session) return
+    if (this.restarting) {
+      // Новая сессия поднимается: на её 'ready' модель сверится ещё раз.
+      this.modelChangePending = true
+      return
+    }
+    // Закрытую сессию не оживляем: следующий start() возьмёт актуальные настройки.
+    if (!session.isRunning || launchModel(loadSettings()) === session.launchedModel) {
+      this.modelChangePending = false
+      return
+    }
+    if (this.assistant?.state.phase !== 'ready') {
+      this.modelChangePending = true
+      return
+    }
+    this.modelChangePending = false
+    this.restarting = true
+    try {
+      await this.start(session.projectDir, session.sessionId)
+    } catch {
+      // start() сам сообщил причину.
     } finally {
       this.restarting = false
     }
