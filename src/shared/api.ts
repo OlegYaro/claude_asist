@@ -40,6 +40,10 @@ export interface DeskApi {
     /** Продолжить прошлую сессию текущего проекта; текущая закрывается. */
     resume(id: string): Promise<SessionInfo | null>
     info(): Promise<SessionInfo | null>
+    /** Подключить плагин, о котором просит Claude, и перезапустить Claude Code в той же сессии. */
+    enablePlugin(id: string): Promise<SessionInfo | null>
+    /** Отказаться от просьбы подключить плагин. */
+    dismissPlugin(): Promise<void>
     stop(): Promise<void>
     openTerminal(): Promise<void>
     /** Команда для присоединения вручную, если автооткрытие Terminal.app не сработало. */

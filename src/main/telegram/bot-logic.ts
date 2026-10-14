@@ -276,6 +276,7 @@ export interface SeenSession {
   plan: string | null
   question: string | null
   permission: string | null
+  plugin: string | null
 }
 
 export const NOTHING_SEEN: SeenSession = {
@@ -283,7 +284,8 @@ export const NOTHING_SEEN: SeenSession = {
   stopped: false,
   plan: null,
   question: null,
-  permission: null
+  permission: null,
+  plugin: null
 }
 
 export type SessionNote =
@@ -300,6 +302,7 @@ export type SessionNote =
       position: string | null
     }
   | { kind: 'permission'; summary: string }
+  | { kind: 'plugin'; id: string; title: string; purpose: string }
 
 /**
  * Сравнивает новое состояние сессии с уже сообщённым и решает, о чём написать.
@@ -343,8 +346,21 @@ export function sessionNotes(
   const permissionKey = p ? `${p.tool}\n${p.summary}` : null
   if (p && permissionKey !== base.permission) notes.push({ kind: 'permission', summary: p.summary })
 
+  const pluginKey = info.pluginRequest?.id ?? null
+  if (info.pluginRequest && pluginKey !== base.plugin) {
+    const { id, title, purpose } = info.pluginRequest
+    notes.push({ kind: 'plugin', id, title, purpose })
+  }
+
   return {
-    seen: { sessionId: info.sessionId, stopped, plan, question: questionKey, permission: permissionKey },
+    seen: {
+      sessionId: info.sessionId,
+      stopped,
+      plan,
+      question: questionKey,
+      permission: permissionKey,
+      plugin: pluginKey
+    },
     notes
   }
 }
@@ -369,6 +385,8 @@ const ANSWER_PHASES: readonly string[] = ['plan-ready', 'question', 'permission'
 export type CallbackAction =
   | { kind: 'say'; phase: AnswerPhase; text: string }
   | { kind: 'open'; index: number }
+  /** Подключить плагин (`id`) или отказаться (`id` = null). */
+  | { kind: 'plugin'; id: string | null }
 
 /** callback_data ограничен 64 байтами. */
 const CALLBACK_LIMIT = 64
@@ -389,7 +407,18 @@ export function parseCallback(data: string | undefined): CallbackAction | null {
   }
   const open = /^open:(\d{1,2})$/.exec(data)
   if (open) return { kind: 'open', index: Number(open[1]) }
+  const plugin = /^plugin:([a-z0-9-]{1,40}|no)$/.exec(data)
+  if (plugin) return { kind: 'plugin', id: plugin[1] === 'no' ? null : plugin[1]! }
   return null
+}
+
+export function pluginKeyboard(id: string): InlineKeyboard {
+  return [
+    [
+      { text: '🔌 Подключить и перезапустить', callback_data: `plugin:${id}` },
+      { text: '✖️ Не надо', callback_data: 'plugin:no' }
+    ]
+  ]
 }
 
 export function planKeyboard(): InlineKeyboard {

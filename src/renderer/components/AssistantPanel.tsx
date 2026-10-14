@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { AssistantState, PendingQuestion } from '../../shared/types'
+import type { AssistantState, PendingQuestion, PluginRequest } from '../../shared/types'
 import Markdown from './Markdown'
 
 interface Props {
@@ -7,6 +7,9 @@ interface Props {
   /** Отправить фразу — как если бы её сказали голосом. */
   onSay: (text: string) => void
   onPermission: (allow: boolean) => void
+  /** Плагин, о котором просит Claude; показывается между задачами. */
+  pluginRequest: PluginRequest | null
+  onPlugin: (id: string | null) => void
 }
 
 /**
@@ -14,7 +17,13 @@ interface Props {
  * команда. Всё, что здесь есть, можно сделать и голосом — кнопки для тех
  * случаев, когда говорить неудобно.
  */
-export default function AssistantPanel({ state, onSay, onPermission }: Props): React.JSX.Element | null {
+export default function AssistantPanel({
+  state,
+  onSay,
+  onPermission,
+  pluginRequest,
+  onPlugin
+}: Props): React.JSX.Element | null {
   switch (state.phase) {
     case 'starting':
       return <div className="assist assist--quiet">Запускаю Claude Code…</div>
@@ -41,6 +50,28 @@ export default function AssistantPanel({ state, onSay, onPermission }: Props): R
       )
 
     case 'ready':
+      if (pluginRequest) {
+        return (
+          <div className="assist assist--tip">
+            <div className="assist__head">
+              <strong>Claude просит подключить {pluginRequest.title}</strong>
+              <span className="assist__hint">{pluginRequest.purpose}</span>
+            </div>
+            <div className="assist__body">
+              Claude Code перезапустится в этой же сессии: переписка и окно сохранятся, плагин будет
+              доступен до смены проекта.
+            </div>
+            <div className="assist__actions">
+              <button className="btn btn--ghost" onClick={() => onPlugin(null)}>
+                Не надо
+              </button>
+              <button className="btn btn--primary" onClick={() => onPlugin(pluginRequest.id)}>
+                Подключить и перезапустить
+              </button>
+            </div>
+          </div>
+        )
+      }
       return state.needsInit ? (
         <div className="assist assist--quiet assist--tip">
           <span>

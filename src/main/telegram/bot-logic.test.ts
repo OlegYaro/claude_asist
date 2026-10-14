@@ -17,6 +17,7 @@ import {
   parseCallback,
   parseCommand,
   permissionKeyboard,
+  pluginKeyboard,
   planKeyboard,
   questionKeyboard,
   replyFor,
@@ -47,6 +48,7 @@ function info(patch: Partial<SessionInfo> = {}, assistant: Partial<AssistantStat
     model: null,
     terminalAttached: false,
     assistant: { ...ASSISTANT, ...assistant },
+    pluginRequest: null,
     ...patch
   }
 }
@@ -278,4 +280,24 @@ test('formatHistory: новая сессия, лимиты и длинный т�
   assert.match(text, /запрос 3 /)
   assert.equal(text.match(/^• /gm)?.length, HISTORY_SESSIONS)
   assert.ok(text.split('\n').every((line) => line.length < 200))
+})
+
+const PLUGIN = { id: 'playwright', title: 'Playwright', purpose: 'браузер' }
+
+test('sessionNotes: просьба подключить плагин сообщается один раз', () => {
+  const first = sessionNotes(NOTHING_SEEN, info({ pluginRequest: PLUGIN }))
+  assert.deepEqual(first.notes.at(-1), { kind: 'plugin', ...PLUGIN })
+  const again = sessionNotes(first.seen, info({ pluginRequest: PLUGIN }))
+  assert.deepEqual(again.notes, [])
+  // Просьба исчезла и появилась снова — сообщаем заново.
+  const gone = sessionNotes(again.seen, info())
+  assert.deepEqual(sessionNotes(gone.seen, info({ pluginRequest: PLUGIN })).notes, [{ kind: 'plugin', ...PLUGIN }])
+})
+
+test('parseCallback и pluginKeyboard: кнопки плагина', () => {
+  assert.deepEqual(parseCallback('plugin:playwright'), { kind: 'plugin', id: 'playwright' })
+  assert.deepEqual(parseCallback('plugin:no'), { kind: 'plugin', id: null })
+  assert.equal(parseCallback('plugin:Bad Id'), null)
+  const [row] = pluginKeyboard('playwright')
+  assert.deepEqual(row?.map((b) => b.callback_data), ['plugin:playwright', 'plugin:no'])
 })

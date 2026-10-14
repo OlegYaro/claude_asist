@@ -249,6 +249,15 @@ function registerIpc(): void {
       return null
     }
   })
+  ipcMain.handle('session:enable-plugin', async (_e, id: string): Promise<SessionInfo | null> => {
+    try {
+      return await sessions.enablePlugin(id)
+    } catch {
+      // Подробная ошибка уже ушла в renderer через канал appError.
+      return null
+    }
+  })
+  ipcMain.handle('session:dismiss-plugin', (): void => sessions.dismissPluginRequest())
   ipcMain.handle('session:info', (): SessionInfo | null => sessions.info)
   ipcMain.handle('history:list', (): Promise<HistorySession[]> => sessions.history())
   ipcMain.handle('session:stop', async (): Promise<void> => sessions.stop())

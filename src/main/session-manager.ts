@@ -10,6 +10,7 @@ import { loadSettings, rememberProject } from './settings'
 import { fileDiff, projectChanges, projectOverview } from './project-info'
 import { listSessions, sessionTranscript } from './history'
 import { modelLabel } from '../shared/model-label'
+import { findPlugin, parsePluginRequest } from '../shared/plugins'
 import type {
   AppError,
   AssistantState,
@@ -52,6 +53,9 @@ export class SessionManager extends EventEmitter {
   private assistant: Assistant | null = null
   private unregisterHook: (() => void) | null = null
   private readonly hooks = new HookServer()
+  /** Плагины, включённые на этой сессии (кнопка «подключить»); сбрасываются со сменой проекта. */
+  private readonly enabledPlugins = new Set<string>()
+  private pluginRequest: string | null = null
 
   private status: SessionStatus = 'stopped'
   private title: string | null = null
@@ -70,7 +74,8 @@ export class SessionManager extends EventEmitter {
       permissionMode: this.permissionMode,
       model: this.model,
       terminalAttached: (this.bridge?.attachedCount ?? 0) > 0,
-      assistant: this.assistant?.state ?? IDLE_ASSISTANT
+      assistant: this.assistant?.state ?? IDLE_ASSISTANT,
+      pluginRequest: this.requestedPlugin()
     }
   }
 
@@ -95,6 +100,8 @@ export class SessionManager extends EventEmitter {
       historyBytes = size
     }
 
+    if (this.session?.projectDir !== projectDir) this.enabledPlugins.clear()
+    this.pluginRequest = null
     await this.stop()
 
     const settings = loadSettings()
@@ -104,7 +111,7 @@ export class SessionManager extends EventEmitter {
     let extraArgs: string[] = []
     try {
       await this.hooks.start()
-      extraArgs = ['--settings', this.hooks.settingsJson()]
+      extraArgs = ['--settings', this.hooks.settingsJson(this.enabledPlugins)]
     } catch {
       extraArgs = []
     }
@@ -121,6 +128,7 @@ export class SessionManager extends EventEmitter {
       model: settings.autoModel ? 'opusplan' : settings.sessionModel === 'default' ? null : settings.sessionModel,
       autoModel: settings.autoModel,
       extraArgs,
+      enabledPlugins: [...this.enabledPlugins],
       ...(resumeId ? { resumeId } : {})
     })
     this.session = session
@@ -318,7 +326,9 @@ export class SessionManager extends EventEmitter {
 
     // История — только в чат окна: ни ассистент, ни статус, ни Telegram-бот (он
     // слушает `transcript` и выдал бы старый ответ за новый) её видеть не должны.
-    tailer.on('history', (message: ChatMessage) => this.emit('history', { kind: 'chat', message }))
+    tailer.on('history', (message: ChatMessage) =>
+      this.emit('history', { kind: 'chat', message: this.withoutPluginMarker(message, false) })
+    )
 
     tailer.on('event', (event: TranscriptEvent) => {
       switch (event.kind) {
@@ -341,10 +351,58 @@ export class SessionManager extends EventEmitter {
           break
       }
       this.assistant?.onTranscript(event)
-      this.emit('transcript', event)
+      this.emit(
+        'transcript',
+        event.kind === 'chat' && event.message.role === 'assistant'
+          ? { kind: 'chat', message: this.withoutPluginMarker(event.message, true) }
+          : event
+      )
     })
 
     tailer.start()
+    this.pushSession()
+  }
+
+  /** Просимый плагин для UI; пока ход не закончен, кнопку не показываем — перезапуск оборвал бы работу. */
+  private requestedPlugin(): SessionInfo['pluginRequest'] {
+    const plugin = this.pluginRequest ? findPlugin(this.pluginRequest) : null
+    if (!plugin || this.assistant?.state.phase !== 'ready') return null
+    return { id: plugin.id, title: plugin.title, purpose: plugin.purpose }
+  }
+
+  /** Убирает из ответа Claude маркер `[[подключить: …]]`; при `track` запоминает просьбу. */
+  private withoutPluginMarker(message: ChatMessage, track: boolean): ChatMessage {
+    if (message.role !== 'assistant') return message
+    const { plugin, text } = parsePluginRequest(message.text)
+    if (track && plugin && !this.enabledPlugins.has(plugin.id)) {
+      this.pluginRequest = plugin.id
+      this.pushSession()
+    }
+    return text === message.text ? message : { ...message, text }
+  }
+
+  /**
+   * Подключает плагин и перезапускает Claude Code в той же сессии (`--resume`):
+   * переписка, окно и настройки приложения остаются. Только между задачами.
+   */
+  async enablePlugin(id: string): Promise<SessionInfo> {
+    const session = this.session
+    const plugin = findPlugin(id)
+    if (!session || !plugin) throw new Error('Нет открытого проекта или неизвестный плагин')
+    if (this.assistant?.state.phase !== 'ready') {
+      throw new Error('Дождитесь конца задачи: перезапуск оборвал бы работу Claude')
+    }
+    this.enabledPlugins.add(plugin.id)
+    const info = await this.start(session.projectDir, session.sessionId)
+    // Ассистент ставит текст в очередь, пока Claude Code запускается.
+    this.submit(`Плагин ${plugin.title} подключён, сессия перезапущена. Продолжай задачу.`)
+    return info
+  }
+
+  /** Отказ от просьбы Claude: плагин не подключаем, карточка пропадает. */
+  dismissPluginRequest(): void {
+    if (this.pluginRequest === null) return
+    this.pluginRequest = null
     this.pushSession()
   }
 

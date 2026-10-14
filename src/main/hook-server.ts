@@ -1,5 +1,6 @@
 import http from 'node:http'
 import { randomBytes } from 'node:crypto'
+import { enabledPluginsSetting } from '../shared/plugins'
 
 /** Вход хуков — то, что Claude Code присылает POST-запросом. */
 export interface PermissionRequestInput {
@@ -76,9 +77,11 @@ export class HookServer {
    *    ревью. Для Stop HTTP-хук не задокументирован, поэтому команда: curl
    *    пересылает вход сюда же и печатает наш ответ.
    *
+   *  `plugins` — id плагинов из shared/plugins.ts, включённых на эту сессию.
+   *
    * Таймаут большой: план, опасная команда и проверки ждут сколько нужно.
    */
-  settingsJson(): string {
+  settingsJson(plugins: Iterable<string> = []): string {
     const url = `http://127.0.0.1:${this.port}/hook/${this.token}`
     const hook = { type: 'http', url, timeout: 3600 }
     const viaCurl = {
@@ -92,6 +95,8 @@ export class HookServer {
       // press Enter» — команда стояла неотправленной. Советы под спиннером — шум.
       promptSuggestionEnabled: false,
       spinnerTipsEnabled: false,
+      // Плагины, выключенные в пользовательских настройках, включаются точечно на сессию.
+      enabledPlugins: enabledPluginsSetting(plugins),
       hooks: {
         PermissionRequest: [{ matcher: '*', hooks: [hook] }],
         PreToolUse: [

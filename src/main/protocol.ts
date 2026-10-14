@@ -1,3 +1,5 @@
+import { PLUGINS } from '../shared/plugins.ts'
+
 /**
  * Что Claude Code узнаёт о работе через приложение — один раз, в системном промте
  * сессии (`--append-system-prompt`), а не обёрткой каждого сообщения: так ваши слова
@@ -7,8 +9,28 @@
  * Стандарты качества — по официальным best practices Claude Code: дать способ
  * проверить себя, исправлять причину, а не симптом, показывать доказательства.
  */
-export function sessionProtocol(opts: { autoModel: boolean }): string {
-  return opts.autoModel ? `${BASE}\n\n${MODEL_ROUTING}\n\n${REPORT}` : `${BASE}\n\n${REPORT}`
+export function sessionProtocol(opts: { autoModel: boolean; enabledPlugins?: readonly string[] }): string {
+  const parts = [BASE]
+  if (opts.autoModel) parts.push(MODEL_ROUTING)
+  const plugins = pluginsSection(opts.enabledPlugins ?? [])
+  if (plugins) parts.push(plugins)
+  parts.push(REPORT)
+  return parts.join('\n\n')
+}
+
+/**
+ * Плагины выключены по умолчанию ради экономии токенов. Нужен один из них — Claude
+ * пишет маркер, приложение показывает кнопку и перезапускает сессию с плагином
+ * (разбор маркера — `parsePluginRequest` в shared/plugins.ts). Включённые не предлагаем.
+ */
+function pluginsSection(enabled: readonly string[]): string {
+  const off = PLUGINS.filter((p) => !enabled.includes(p.id))
+  if (off.length === 0) return ''
+  const list = off.map((p) => `- ${p.id} — ${p.purpose}`).join('\n')
+  return `## Выключенные плагины (экономия токенов)
+Эти плагины сейчас не подключены:
+${list}
+Если без одного из них задачу не выполнить, не пытайся обойтись и не проси пользователя ничего делать руками: напиши последней строкой ответа маркер \`[[подключить: id]]\` (один плагин) и закончи ход. Приложение предложит кнопку, перезапустит сессию с плагином и сообщит тебе, что можно продолжать. Не проси плагин без реальной необходимости. Если тема разговора сменилась и накопленный контекст больше не нужен, посоветуй пользователю начать новую сессию.`
 }
 
 /**

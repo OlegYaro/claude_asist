@@ -25,6 +25,14 @@ export interface SessionInfo {
   /** Открыто ли сейчас хотя бы одно окно Terminal.app, присоединённое к PTY. */
   terminalAttached: boolean
   assistant: AssistantState
+  /** Плагин, который Claude просит подключить (с перезапуском сессии); null — не просит. */
+  pluginRequest: PluginRequest | null
+}
+
+export interface PluginRequest {
+  id: string
+  title: string
+  purpose: string
 }
 
 // ─────────────────────────── Ассистент ───────────────────────────

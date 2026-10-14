@@ -241,6 +241,10 @@ export default function App(): React.JSX.Element {
               state={info.assistant}
               onSay={(text) => send(text, false)}
               onPermission={(allow) => void window.desk.session.answerPermission(allow)}
+              pluginRequest={info.pluginRequest}
+              onPlugin={(id) =>
+                void (id ? window.desk.session.enablePlugin(id) : window.desk.session.dismissPlugin())
+              }
             />
           }
           voiceSlot={voiceSlot}

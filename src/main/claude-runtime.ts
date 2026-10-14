@@ -23,6 +23,8 @@ export interface ClaudeSessionOptions {
   claudeBinPath: string | null
   /** Дополнительные аргументы (например `--settings` с хуками). */
   extraArgs?: string[]
+  /** Id плагинов, включённых на эту сессию (см. shared/plugins.ts). */
+  enabledPlugins?: string[]
   /** Продолжить прошлую сессию с этим id (`--resume`) вместо новой. */
   resumeId?: string
   /** Передаётся как `--model`; null — модель по умолчанию из настроек Claude Code. */
@@ -93,7 +95,7 @@ export class ClaudeSession extends EventEmitter {
       // Протокол голосовой работы: русский язык, сам выбирай — ответить, сделать
       // или начать с плана, стандарты продакшен-качества. См. protocol.ts.
       '--append-system-prompt',
-      sessionProtocol({ autoModel: this.opts.autoModel })
+      sessionProtocol({ autoModel: this.opts.autoModel, enabledPlugins: this.opts.enabledPlugins })
     ]
     if (this.opts.model) args.push('--model', this.opts.model)
     if (this.opts.permissionMode) args.push('--permission-mode', this.opts.permissionMode)

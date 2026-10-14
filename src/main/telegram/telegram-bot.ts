@@ -17,6 +17,7 @@ import {
   messageInput,
   newPairCode,
   parseCallback,
+  pluginKeyboard,
   parseCommand,
   permissionKeyboard,
   planKeyboard,
@@ -458,6 +459,25 @@ export class TelegramBot {
       return
     }
 
+    if (action.kind === 'plugin') {
+      const requested = this.sessions.info?.pluginRequest?.id ?? null
+      if (messageId !== this.answerMessageId || requested === null || (action.id !== null && action.id !== requested)) {
+        await this.answerCallback(token, query.id, 'Уже неактуально')
+        await this.dropKeyboard(token, chatId, messageId)
+        return
+      }
+      this.answerMessageId = null
+      await this.dropKeyboard(token, chatId, messageId)
+      if (action.id === null) {
+        await this.answerCallback(token, query.id, 'Не подключаю')
+        this.sessions.dismissPluginRequest()
+        return
+      }
+      await this.answerCallback(token, query.id, 'Перезапускаю с плагином')
+      void this.sessions.enablePlugin(action.id).catch(() => undefined)
+      return
+    }
+
     const phase = this.sessions.info?.assistant.phase
     if (messageId !== this.answerMessageId || phase !== action.phase) {
       await this.answerCallback(token, query.id, 'Уже неактуально')
@@ -567,6 +587,12 @@ export class TelegramBot {
         )
         return
       }
+      case 'plugin':
+        await this.sendAnswerRequest(
+          `🔌 Claude просит подключить ${note.title} (${note.purpose}). Сессия перезапустится, переписка сохранится.`,
+          pluginKeyboard(note.id)
+        )
+        return
       case 'permission':
         await this.sendAnswerRequest(`⚠️ Рискованная команда — разрешить?\n\n${note.summary}`, permissionKeyboard())
         return
