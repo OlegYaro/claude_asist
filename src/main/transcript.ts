@@ -2,11 +2,13 @@ import { EventEmitter } from 'node:events'
 import { createReadStream, existsSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import { join, relative, isAbsolute } from 'node:path'
-import { claudeProjectsDir } from './paths'
-import { promptText } from './history-logic'
-import { parseQuestions } from './questions'
-import { ModelTracker } from './model-tracker'
-import type { ChatMessage, TodoItem, ToolTask, TranscriptEvent } from '../shared/types'
+// Расширения .ts — чтобы модуль (и его тест) запускался прямо в `node --test`.
+import { claudeProjectsDir } from './paths.ts'
+import { promptText } from './history-logic.ts'
+import { parseQuestions } from './questions.ts'
+import { ModelTracker } from './model-tracker.ts'
+import { parseUsage } from '../shared/token-stats.ts'
+import type { ChatMessage, TodoItem, ToolTask, TranscriptEvent } from '../shared/types.ts'
 
 /**
  * Читает JSONL-транскрипт, который Claude Code пишет параллельно работе в TUI,
@@ -24,6 +26,8 @@ const POLL_INTERVAL_MS = 250
 const FIND_RETRY_INTERVAL_MS = 250
 /** Полный перебор папок проектов — раз в столько попыток (≈2 с). */
 const FULL_SCAN_EVERY = 8
+/** Сколько последних message.id помнить для сбора инструментов ответа. */
+const USAGE_IDS_MAX = 200
 
 
 /**
@@ -143,6 +147,66 @@ export function summarizeToolInput(
   }
 }
 
+const DETAIL_MAX = 20000
+
+/** Обрезка без схлопывания пробелов: переводы строк в полном тексте важны. */
+function clip(value: string, max: number, mark: string): string {
+  return value.length > max ? `${value.slice(0, max)}${mark}` : value
+}
+
+/**
+ * Полный вход вызова инструмента для раскрытой строки «Действий» —
+ * то, что summary сокращает до одной строки.
+ */
+export function detailOfToolInput(name: string, input: unknown): string {
+  if (typeof input !== 'object' || input === null) return ''
+  const i = input as Record<string, unknown>
+  const str = (key: string): string | null =>
+    typeof i[key] === 'string' ? (i[key] as string) : null
+
+  let text: string | null
+  switch (name) {
+    case 'Bash':
+      text = str('command')
+      break
+    case 'Read':
+    case 'Write':
+    case 'Edit':
+    case 'NotebookEdit':
+      text = str('file_path')
+      break
+    case 'Agent':
+    case 'Task': {
+      const parts = [str('description'), str('prompt')].filter((p): p is string => !!p)
+      text = parts.length ? parts.join('\n\n') : null
+      break
+    }
+    case 'ExitPlanMode':
+      text = str('plan')
+      break
+    case 'Grep':
+    case 'Glob':
+      text = str('pattern')
+      break
+    case 'WebSearch':
+      text = str('query')
+      break
+    case 'WebFetch':
+      text = str('url')
+      break
+    default:
+      text = null
+  }
+  // Неизвестный инструмент или непривычная форма входа — показываем вход как есть.
+  if (text === null) text = JSON.stringify(i, null, 2) ?? ''
+  return clip(text, DETAIL_MAX, '… (обрезано)')
+}
+
+/** Текст ошибки инструмента: без схлопывания переводов строк, до `max` символов. */
+export function toolErrorText(raw: string, max = 4000): string {
+  return clip(raw.trim(), max, '…')
+}
+
 /** Достаёт текст из `content` блока tool_result — он бывает строкой или массивом блоков. */
 function toolResultText(content: unknown): string {
   if (typeof content === 'string') return content
@@ -217,20 +281,32 @@ export class TranscriptTailer extends EventEmitter {
   /** Накопленный план из TaskCreate/TaskUpdate — этот CLI использует их вместо TodoWrite. */
   private taskPlan = new Map<string, TodoItem>()
   private models = new ModelTracker()
+  /**
+   * message.id → инструменты ответа. Один ответ API записан несколькими строками
+   * с одним id и одинаковым usage, а tool_use разнесены по строкам — копим список,
+   * чтобы последнее событие `usage` (renderer заменяет его по id) несло все инструменты.
+   */
+  private usageTools = new Map<string, string[]>()
 
-  constructor(
-    private readonly filePath: string,
-    private readonly projectDir: string,
-    /** true — прочитать существующее содержимое; false — только новые строки. */
-    private readonly replayExisting = false,
-    /**
-     * Строки до этого байта — история продолженной сессии: они уходят событием
-     * `history` (ChatMessage, включая ваши реплики) только для показа и не
-     * становятся событиями `event`, иначе старый план снова ждал бы одобрения.
-     */
-    private readonly historyBytes = 0
-  ) {
+  // Поля объявлены явно, а не параметрами конструктора: `node --test` (strip-only)
+  // не поддерживает parameter properties.
+  private readonly filePath: string
+  private readonly projectDir: string
+  /** true — прочитать существующее содержимое; false — только новые строки. */
+  private readonly replayExisting: boolean
+  /**
+   * Строки до этого байта — история продолженной сессии: они уходят событием
+   * `history` (ChatMessage, включая ваши реплики) только для показа и не
+   * становятся событиями `event`, иначе старый план снова ждал бы одобрения.
+   */
+  private readonly historyBytes: number
+
+  constructor(filePath: string, projectDir: string, replayExisting = false, historyBytes = 0) {
     super()
+    this.filePath = filePath
+    this.projectDir = projectDir
+    this.replayExisting = replayExisting
+    this.historyBytes = historyBytes
   }
 
   start(): void {
@@ -341,7 +417,7 @@ export class TranscriptTailer extends EventEmitter {
         this.handleAssistant(r, ts)
         break
       case 'user':
-        this.handleUser(r)
+        this.handleUser(r, ts)
         break
       case 'ai-title':
         if (typeof r['aiTitle'] === 'string') {
@@ -410,7 +486,18 @@ export class TranscriptTailer extends EventEmitter {
     this.emitModel(this.models.setMain(m['model']))
 
     const content = m['content']
-    if (!Array.isArray(content)) return
+    if (!Array.isArray(content)) {
+      this.trackUsage(m, [], ts)
+      return
+    }
+    this.trackUsage(
+      m,
+      content.flatMap((block) => {
+        const b = block as Record<string, unknown> | null
+        return b?.['type'] === 'tool_use' && typeof b['name'] === 'string' ? [b['name']] : []
+      }),
+      ts
+    )
 
     const uuid = typeof r['uuid'] === 'string' ? r['uuid'] : String(ts)
     let textIndex = 0
@@ -439,6 +526,7 @@ export class TranscriptTailer extends EventEmitter {
           id: b['id'],
           name,
           summary: summarizeToolInput(name, b['input'], this.projectDir),
+          detail: detailOfToolInput(name, b['input']),
           state: 'running',
           startedAt: ts,
           endedAt: null,
@@ -466,6 +554,25 @@ export class TranscriptTailer extends EventEmitter {
         }
       }
     }
+  }
+
+  /** Расход токенов ответа: без message.id или usage запись не считаем. */
+  private trackUsage(m: Record<string, unknown>, tools: string[], ts: number): void {
+    const messageId = m['id']
+    if (typeof messageId !== 'string' || !messageId) return
+    const usage = parseUsage(m['usage'])
+    if (!usage) return
+
+    const acc = this.usageTools.get(messageId) ?? []
+    acc.push(...tools)
+    // Удаление и повторная вставка держат свежие id в конце — старые вытесняются первыми.
+    this.usageTools.delete(messageId)
+    this.usageTools.set(messageId, acc)
+    if (this.usageTools.size > USAGE_IDS_MAX) {
+      const oldest = this.usageTools.keys().next().value
+      if (oldest !== undefined) this.usageTools.delete(oldest)
+    }
+    this.emitEvent({ kind: 'usage', messageId, tools: [...acc], usage, at: ts })
   }
 
   /**
@@ -506,11 +613,13 @@ export class TranscriptTailer extends EventEmitter {
     this.emitEvent({ kind: 'todos', items: [...this.taskPlan.values()] })
   }
 
-  private handleUser(r: Record<string, unknown>): void {
+  private handleUser(r: Record<string, unknown>, ts: number): void {
     const message = r['message']
     if (typeof message !== 'object' || message === null) return
     const content = (message as Record<string, unknown>)['content']
     if (!Array.isArray(content)) return
+    // Итог субагента (`toolUseResult` верхнего уровня) относим к одному вызову на запись.
+    let agentTotalUsed = false
 
     for (const block of content) {
       if (typeof block !== 'object' || block === null) continue
@@ -534,12 +643,18 @@ export class TranscriptTailer extends EventEmitter {
       if (b['type'] !== 'tool_result' || typeof b['tool_use_id'] !== 'string') continue
 
       const id = b['tool_use_id']
-      if (!this.openTasks.has(id)) continue
+      const task = this.openTasks.get(id)
+      if (!task) continue
       this.openTasks.delete(id)
       this.emitModel(this.models.agentEnd(id))
 
+      if ((task.name === 'Agent' || task.name === 'Task') && !agentTotalUsed) {
+        agentTotalUsed = true
+        this.emitAgentUsage(id, r['toolUseResult'], ts)
+      }
+
       const isError = b['is_error'] === true
-      const errorText = isError ? truncate(toolResultText(b['content']), 200) || 'ошибка' : null
+      const errorText = isError ? toolErrorText(toolResultText(b['content'])) || 'ошибка' : null
       this.emitEvent({
         kind: 'task-end',
         id,
@@ -547,5 +662,24 @@ export class TranscriptTailer extends EventEmitter {
         error: errorText
       })
     }
+  }
+
+  /**
+   * Расход субагента. Его собственные ответы — в sidechain, который мы отбрасываем,
+   * поэтому берём итог `toolUseResult.totalTokens`. ПРИБЛИЖЕНИЕ: в замеченных
+   * транскриптах это сумма usage ПОСЛЕДНЕГО запроса субагента (input + кеш + output),
+   * а не всех его запросов. Разбивку берём из `toolUseResult.usage`, нет её — всё в output.
+   * Нет поля, не число или ≤ 0 — ничего не эмитим.
+   */
+  private emitAgentUsage(toolUseId: string, raw: unknown, ts: number): void {
+    if (typeof raw !== 'object' || raw === null) return
+    const { totalTokens: total, usage: rawUsage } = raw as { totalTokens?: unknown; usage?: unknown }
+    // Есть разбивка по видам — берём её; иначе всё пишем в output.
+    let usage = parseUsage(rawUsage)
+    if (!usage || usage.input + usage.cacheWrite + usage.cacheRead + usage.output <= 0) {
+      if (typeof total !== 'number' || !Number.isFinite(total) || total <= 0) return
+      usage = { input: 0, cacheWrite: 0, cacheRead: 0, output: Math.floor(total) }
+    }
+    this.emitEvent({ kind: 'usage', messageId: `agent:${toolUseId}`, tools: ['Agent'], usage, at: ts })
   }
 }

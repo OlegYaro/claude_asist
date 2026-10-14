@@ -39,6 +39,7 @@ import type {
   CheckRecord,
   PlanRecord,
   ReviewRecord,
+  TokenUsage,
   TranscriptEvent
 } from '../shared/types'
 
@@ -167,6 +168,7 @@ export class Assistant extends EventEmitter {
   private trustAnswered = false
   private queue: string[] = []
   private actionSeq = 0
+  private reviewSeq = 0
   private busy = false
   /** Сколько сообщений Claude Code подтвердил хуком UserPromptSubmit. */
   private submitted = 0
@@ -816,7 +818,7 @@ export class Assistant extends EventEmitter {
       const before = this.phase
       this.setPhase('checking')
       this.logAction('Ревью', 'независимый ревьюер изучает изменения…')
-      const issues = await reviewChanges(
+      const { issues, usage } = await reviewChanges(
         {
           dir,
           task: this.task.text,
@@ -826,6 +828,7 @@ export class Assistant extends EventEmitter {
         },
         signal
       )
+      this.logUsage('Ревью', usage)
       if (signal.aborted) return null
       this.setPhase(before === 'checking' ? 'executing' : before)
 
@@ -866,7 +869,7 @@ export class Assistant extends EventEmitter {
     const before = this.phase
     this.setPhase('checking')
     this.logAction('Полнота', 'сверяю результат с планом…')
-    const missing = await checkCompletion(
+    const { missing, usage } = await checkCompletion(
       {
         dir: this.session.projectDir,
         task: this.task.text,
@@ -876,6 +879,7 @@ export class Assistant extends EventEmitter {
       },
       signal
     )
+    this.logUsage('Проверка', usage)
     if (signal.aborted) return null
     this.setPhase(before === 'checking' ? 'executing' : before)
 
@@ -1138,6 +1142,18 @@ export class Assistant extends EventEmitter {
 
   private say(text: string): void {
     this.emit('say', text)
+  }
+
+  /** Токены отдельного запуска `claude -p` (ревью, проверка полноты) — в статистику расхода. */
+  private logUsage(tool: string, usage: TokenUsage | null): void {
+    if (!usage) return
+    this.emit('action', {
+      kind: 'usage',
+      messageId: `review:${++this.reviewSeq}`,
+      tools: [tool],
+      usage,
+      at: Date.now()
+    } satisfies TranscriptEvent)
   }
 
   /** Строка в панели «Действия» — то, что ассистент сделал сам. */

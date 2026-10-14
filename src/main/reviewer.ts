@@ -2,6 +2,8 @@ import { execFile } from 'node:child_process'
 import { getLoginShellEnv, resolveClaudeBin } from './paths'
 import { loadSettings } from './settings'
 import type { MissingStep } from './model-routing'
+import type { TokenUsage } from '../shared/types'
+import { parseUsage } from '../shared/token-stats'
 
 export interface ReviewIssue {
   file: string
@@ -77,12 +79,13 @@ function reviewPrompt(input: ReviewInput): string {
  *
  * null — ревью не удалось (нет claude, таймаут, сбой); это не повод держать задачу.
  */
-export async function reviewChanges(input: ReviewInput, signal?: AbortSignal): Promise<ReviewIssue[] | null> {
-  const out = (await runReadonlyClaude(input.dir, reviewPrompt(input), SCHEMA, null, signal)) as {
-    issues?: ReviewIssue[]
-  } | null
-  const issues = out?.issues
-  return Array.isArray(issues) ? issues.filter((i) => i && i.problem) : null
+export async function reviewChanges(
+  input: ReviewInput,
+  signal?: AbortSignal
+): Promise<{ issues: ReviewIssue[] | null; usage: TokenUsage | null }> {
+  const run = await runReadonlyClaude(input.dir, reviewPrompt(input), SCHEMA, null, signal)
+  const issues = (run.output as { issues?: ReviewIssue[] } | null)?.issues
+  return { issues: Array.isArray(issues) ? issues.filter((i) => i && i.problem) : null, usage: run.usage }
 }
 
 const COMPLETION_SCHEMA = {
@@ -128,26 +131,28 @@ function completionPrompt(input: ReviewInput & { plan: string }): string {
 export async function checkCompletion(
   input: ReviewInput & { plan: string },
   signal?: AbortSignal
-): Promise<MissingStep[] | null> {
-  const out = (await runReadonlyClaude(input.dir, completionPrompt(input), COMPLETION_SCHEMA, 'sonnet', signal)) as {
-    done?: boolean
-    missing?: MissingStep[]
-  } | null
-  if (!out || !Array.isArray(out.missing)) return null
+): Promise<{ missing: MissingStep[] | null; usage: TokenUsage | null }> {
+  const run = await runReadonlyClaude(input.dir, completionPrompt(input), COMPLETION_SCHEMA, 'sonnet', signal)
+  const out = run.output as { done?: boolean; missing?: MissingStep[] } | null
+  if (!out || !Array.isArray(out.missing)) return { missing: null, usage: run.usage }
   const missing = out.missing.filter((m) => m && typeof m.what === 'string' && m.what.trim())
-  return missing.map((m) => ({ step: Number.isInteger(m.step) && m.step > 0 ? m.step : 0, what: m.what.trim() }))
+  return {
+    missing: missing.map((m) => ({ step: Number.isInteger(m.step) && m.step > 0 ? m.step : 0, what: m.what.trim() })),
+    usage: run.usage
+  }
 }
 
-/** `claude -p` только на чтение с ответом по JSON-схеме; null — запуск не удался. */
+/** `claude -p` только на чтение с ответом по JSON-схеме; output null — запуск не удался. usage — расход токенов за весь запуск. */
 async function runReadonlyClaude(
   dir: string,
   prompt: string,
   schema: object,
   model: string | null,
   signal?: AbortSignal
-): Promise<unknown> {
+): Promise<{ output: unknown; usage: TokenUsage | null }> {
+  const failed = { output: null, usage: null }
   const bin = await resolveClaudeBin(loadSettings().claudeBinPath)
-  if (!bin) return null
+  if (!bin) return failed
   const env = await getLoginShellEnv()
 
   return new Promise((resolve) => {
@@ -190,12 +195,12 @@ async function runReadonlyClaude(
         ...(signal ? { signal } : {})
       },
       (err, stdout) => {
-        if (err && !stdout) return resolve(null)
+        if (err && !stdout) return resolve(failed)
         try {
-          const out = JSON.parse(stdout) as { structured_output?: unknown }
-          resolve(out.structured_output ?? null)
+          const out = JSON.parse(stdout) as { structured_output?: unknown; usage?: unknown }
+          resolve({ output: out.structured_output ?? null, usage: parseUsage(out.usage) })
         } catch {
-          resolve(null)
+          resolve(failed)
         }
       }
     )

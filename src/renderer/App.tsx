@@ -15,7 +15,7 @@ import { isApprove, isStop } from '../shared/intents'
 import type { Settings as SettingsData } from '../shared/types'
 
 export default function App(): React.JSX.Element {
-  const { info, messages, tasks, todos, error, start, resume, submit, dismissError, showError } =
+  const { info, messages, tasks, todos, usage, error, start, resume, submit, dismissError, showError } =
     useSession()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [projectOpen, setProjectOpen] = useState(false)
@@ -245,7 +245,7 @@ export default function App(): React.JSX.Element {
           }
           voiceSlot={voiceSlot}
         />
-        <Tasks tasks={tasks} todos={todos} />
+        <Tasks tasks={tasks} todos={todos} usage={usage} />
       </main>
       {projectOpen && (
         <ProjectDrawer

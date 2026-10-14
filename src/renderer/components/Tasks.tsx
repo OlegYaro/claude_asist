@@ -1,9 +1,13 @@
 import { useMemo, useState } from 'react'
-import type { ActionKind, TodoItem, ToolTask } from '../../shared/types'
+import type { ActionKind, TodoItem, TokenUsage, ToolTask } from '../../shared/types'
+import { TOOL_LABEL, kindOf } from '../../shared/action-kind'
+import { KIND } from '../actionKinds'
+import TokenChart from './TokenChart'
 
 interface Props {
   tasks: ToolTask[]
   todos: TodoItem[]
+  usage: Record<string, { tools: string[]; usage: TokenUsage }>
 }
 
 const STATE_MARK: Record<ToolTask['state'], string> = {
@@ -16,80 +20,6 @@ const TODO_MARK: Record<TodoItem['status'], string> = {
   pending: '○',
   in_progress: '⟳',
   completed: '✓'
-}
-
-/** Значок и подпись типа — у каждого типа свой цвет (см. .act--<kind> в стилях). */
-const KIND: Record<ActionKind, { icon: string; label: string }> = {
-  task: { icon: '▶', label: 'Задача' },
-  edit: { icon: '✎', label: 'Правка' },
-  command: { icon: '❯', label: 'Команда' },
-  read: { icon: '◌', label: 'Чтение' },
-  approval: { icon: '⛉', label: 'Согласие' },
-  check: { icon: '⚑', label: 'Проверка' },
-  review: { icon: '◉', label: 'Ревью' },
-  plan: { icon: '☰', label: 'План' },
-  checkpoint: { icon: '⟲', label: 'Точка отката' },
-  question: { icon: '?', label: 'Вопрос' },
-  agent: { icon: '◈', label: 'Субагент' },
-  system: { icon: '·', label: 'Служебное' }
-}
-
-/** Русские названия инструментов Claude; незнакомые показываем как есть. */
-const TOOL_LABEL: Record<string, string> = {
-  Read: 'Чтение',
-  Write: 'Запись',
-  Edit: 'Правка',
-  MultiEdit: 'Правка',
-  NotebookEdit: 'Правка блокнота',
-  Bash: 'Команда',
-  Glob: 'Поиск файлов',
-  Grep: 'Поиск в коде',
-  WebSearch: 'Поиск в интернете',
-  WebFetch: 'Загрузка страницы',
-  Agent: 'Субагент',
-  Task: 'Субагент',
-  TodoWrite: 'План',
-  TaskCreate: 'Новая задача',
-  TaskUpdate: 'Обновление задачи',
-  AskUserQuestion: 'Вопрос',
-  Skill: 'Навык',
-  ExitPlanMode: 'План готов',
-  EnterPlanMode: 'Переход к плану',
-  ToolSearch: 'Поиск инструментов'
-}
-
-/** Тип действия Claude по имени инструмента; у записей приложения он задан явно. */
-function kindOf(task: ToolTask): ActionKind {
-  if (task.kind) return task.kind
-  switch (task.name) {
-    case 'Edit':
-    case 'Write':
-    case 'MultiEdit':
-    case 'NotebookEdit':
-      return 'edit'
-    case 'Bash':
-      return 'command'
-    case 'Read':
-    case 'Grep':
-    case 'Glob':
-    case 'WebSearch':
-    case 'WebFetch':
-    case 'ToolSearch':
-      return 'read'
-    case 'ExitPlanMode':
-    case 'EnterPlanMode':
-    case 'TodoWrite':
-    case 'TaskCreate':
-    case 'TaskUpdate':
-      return 'plan'
-    case 'AskUserQuestion':
-      return 'question'
-    case 'Agent':
-    case 'Task':
-      return 'agent'
-    default:
-      return 'system'
-  }
 }
 
 type Filter = 'all' | 'edit' | 'command' | 'check' | 'approval' | 'read'
@@ -141,9 +71,19 @@ function timeLabel(at: number): string {
   return new Date(at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
 }
 
-export default function Tasks({ tasks, todos }: Props): React.JSX.Element {
+export default function Tasks({ tasks, todos, usage }: Props): React.JSX.Element {
   const [filter, setFilter] = useState<Filter>('all')
-  const groups = useMemo(() => groupByTask(tasks.slice(-400)), [tasks])
+  const groups = useMemo(() => groupByTask(tasks), [tasks])
+  // Раскрытые группы (список действий рендерим только у них) и строки с подробностями.
+  // Явный выбор пользователя по группам; без него раскрыта только первая (последняя задача).
+  const [groupChoice, setGroupChoice] = useState<Record<string, boolean>>({})
+  const [openRows, setOpenRows] = useState<Set<string>>(new Set())
+  const toggleRow = (id: string): void =>
+    setOpenRows((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
   const kinds = FILTERS.find((f) => f.id === filter)?.kinds ?? []
   const visible = (t: ToolTask): boolean => kinds.length === 0 || kinds.includes(kindOf(t))
 
@@ -188,10 +128,20 @@ export default function Tasks({ tasks, todos }: Props): React.JSX.Element {
             {groups.map((group, gi) => {
               const items = group.items.filter(visible).slice().reverse()
               if (filter !== 'all' && items.length === 0) return null
+              const isOpen = groupChoice[group.id] ?? gi === 0
               const failed = group.items.some((t) => t.state === 'error')
               return (
                 // Последняя задача раскрыта, прошлые свёрнуты — их можно развернуть.
-                <details key={group.id} className="group" open={gi === 0}>
+                <details
+                  key={group.id}
+                  className="group"
+                  open={isOpen}
+                  onToggle={(e) => {
+                    const on = e.currentTarget.open
+                    // toggle приходит и после программного open — берём только расхождения.
+                    if (on !== isOpen) setGroupChoice((prev) => ({ ...prev, [group.id]: on }))
+                  }}
+                >
                   <summary className={`group__head${failed ? ' group__head--failed' : ''}`}>
                     <span className="group__icon">▶</span>
                     <span className="group__title">{group.title}</span>
@@ -199,34 +149,52 @@ export default function Tasks({ tasks, todos }: Props): React.JSX.Element {
                       {timeLabel(group.at)} · {group.items.length}
                     </span>
                   </summary>
-                  <ul className="tools">
-                    {items.map((task) => {
-                      const kind = kindOf(task)
-                      const meta = KIND[kind]
-                      return (
-                        <li key={task.id} className={`tool act act--${kind} tool--${task.state}`}>
-                          <span className="act__icon" title={meta.label}>
-                            {task.state === 'running' ? STATE_MARK.running : meta.icon}
-                          </span>
-                          <span className="tool__body">
-                            <span className="tool__name" title={task.name}>
-                              {TOOL_LABEL[task.name] ?? task.name}
-                              {task.state === 'error' && <span className="act__fail"> ✕</span>}
+                  {isOpen && (
+                    <ul className="tools">
+                      {items.map((task) => {
+                        const kind = kindOf(task)
+                        const meta = KIND[kind]
+                        const expanded = openRows.has(task.id)
+                        const detail = task.detail && task.detail !== task.summary ? task.detail : null
+                        return (
+                          <li key={task.id} className={`tool act act--${kind} tool--${task.state}`}>
+                            <span className="act__icon" title={meta.label}>
+                              {task.state === 'running' ? STATE_MARK.running : meta.icon}
                             </span>
-                            {task.summary && <span className="tool__summary">{task.summary}</span>}
-                            {task.error && <span className="tool__error">{task.error}</span>}
-                          </span>
-                          {duration(task) && <span className="tool__time">{duration(task)}</span>}
-                        </li>
-                      )
-                    })}
-                  </ul>
+                            <div className="tool__body">
+                              <button
+                                type="button"
+                                className="tool__toggle"
+                                aria-expanded={expanded}
+                                onClick={() => toggleRow(task.id)}
+                              >
+                              <span className="tool__name" title={task.name}>
+                                {TOOL_LABEL[task.name] ?? task.name}
+                                {task.state === 'error' && <span className="act__fail"> ✕</span>}
+                              </span>
+                              {task.summary && <span className="tool__summary">{task.summary}</span>}
+                              {task.error && (
+                                <span className={`tool__error${expanded ? '' : ' tool__error--clamp'}`}>
+                                  {task.error}
+                                </span>
+                              )}
+                              </button>
+                              {expanded && detail && <pre className="tool__detail">{detail}</pre>}
+                            </div>
+                            {duration(task) && <span className="tool__time">{duration(task)}</span>}
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
                 </details>
               )
             })}
           </div>
         )}
       </div>
+
+      <TokenChart usage={usage} />
     </aside>
   )
 }

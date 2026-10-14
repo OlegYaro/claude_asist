@@ -4,6 +4,7 @@ import type {
   ChatMessage,
   SessionInfo,
   TodoItem,
+  TokenUsage,
   ToolTask,
   TranscriptEvent
 } from '../shared/types'
@@ -15,6 +16,8 @@ interface State {
   messages: ChatMessage[]
   tasks: ToolTask[]
   todos: TodoItem[]
+  /** Расход токенов по id ответа модели. */
+  usage: Record<string, { tools: string[]; usage: TokenUsage }>
   error: AppError | null
 }
 
@@ -26,9 +29,11 @@ type Action =
   | { t: 'reset' }
 
 /** Сколько последних строк держит панель «Действия». */
-const MAX_TASKS = 500
+const MAX_TASKS = 5000
+/** Сколько последних ответов держим в статистике токенов. */
+const MAX_USAGE = 5000
 
-const initial: State = { info: null, sessionId: null, messages: [], tasks: [], todos: [], error: null }
+const initial: State = { info: null, sessionId: null, messages: [], tasks: [], todos: [], usage: {}, error: null }
 
 function reduce(state: State, action: Action): State {
   switch (action.t) {
@@ -85,6 +90,14 @@ function applyTranscript(state: State, event: TranscriptEvent): State {
 
     case 'todos':
       return { ...state, todos: event.items }
+
+    case 'usage': {
+      // Запись ответа заменяется целиком: транскрипт может дописывать usage по тому же id.
+      const next = { ...state.usage, [event.messageId]: { tools: event.tools, usage: event.usage } }
+      const ids = Object.keys(next)
+      if (ids.length > MAX_USAGE) for (const id of ids.slice(0, ids.length - MAX_USAGE)) delete next[id]
+      return { ...state, usage: next }
+    }
 
     case 'turn-end': {
       // Финальность известна только по завершении хода: помечаем последнее

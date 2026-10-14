@@ -196,6 +196,16 @@ export interface ToolTask {
   error: string | null
   /** Тип строки; у действий Claude выводится из имени инструмента. */
   kind?: ActionKind
+  /** Полный вход действия (команда целиком, diff правки), не сокращённый до summary. */
+  detail?: string
+}
+
+/** Токены одного ответа модели (поле `usage` в транскрипте). */
+export interface TokenUsage {
+  input: number
+  cacheWrite: number
+  cacheRead: number
+  output: number
 }
 
 /** Элемент списка TodoWrite — канонический план, который ведёт сам Claude. */
@@ -233,6 +243,11 @@ export type TranscriptEvent =
   | { kind: 'plan'; id: string; plan: string }
   /** Claude задал вопрос с вариантами (AskUserQuestion). */
   | { kind: 'question'; id: string; question: string; options: string[] }
+  /**
+   * Расход токенов одного ответа. tools — имена его инструментов (пустой список —
+   * ответ без инструментов); у ревью и проверок приложения — служебные имена вроде 'Ревью'.
+   */
+  | { kind: 'usage'; messageId: string; tools: string[]; usage: TokenUsage; at: number }
 
 // ───────────────────────── Настройки ─────────────────────────
 
