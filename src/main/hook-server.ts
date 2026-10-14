@@ -12,6 +12,8 @@ export interface PermissionRequestInput {
   permission_mode?: string
   /** Stop: предыдущий Stop-хук уже не дал закончить. */
   stop_hook_active?: boolean
+  /** Stop: последний ответ Claude текстом. */
+  last_assistant_message?: string
 }
 
 /**

@@ -253,7 +253,7 @@ function registerIpc(): void {
     try {
       return await sessions.enablePlugin(id)
     } catch {
-      // Подробная ошибка уже ушла в renderer через канал appError.
+      // SessionManager сам сообщил причину через канал appError.
       return null
     }
   })

@@ -50,28 +50,7 @@ export default function AssistantPanel({
       )
 
     case 'ready':
-      if (pluginRequest) {
-        return (
-          <div className="assist assist--tip">
-            <div className="assist__head">
-              <strong>Claude просит подключить {pluginRequest.title}</strong>
-              <span className="assist__hint">{pluginRequest.purpose}</span>
-            </div>
-            <div className="assist__body">
-              Claude Code перезапустится в этой же сессии: переписка и окно сохранятся, плагин будет
-              доступен до смены проекта.
-            </div>
-            <div className="assist__actions">
-              <button className="btn btn--ghost" onClick={() => onPlugin(null)}>
-                Не надо
-              </button>
-              <button className="btn btn--primary" onClick={() => onPlugin(pluginRequest.id)}>
-                Подключить и перезапустить
-              </button>
-            </div>
-          </div>
-        )
-      }
+      if (pluginRequest) return <PluginCard request={pluginRequest} onPlugin={onPlugin} />
       return state.needsInit ? (
         <div className="assist assist--quiet assist--tip">
           <span>
@@ -195,6 +174,41 @@ function QuestionCard({
           </button>
         </div>
       )}
+    </div>
+  )
+}
+
+/** Карточка просьбы о плагине; пока идёт перезапуск, кнопки заблокированы. */
+function PluginCard({
+  request,
+  onPlugin
+}: {
+  request: PluginRequest
+  onPlugin: (id: string | null) => void
+}): React.JSX.Element {
+  const [busy, setBusy] = useState(false)
+  const answer = (id: string | null): void => {
+    setBusy(true)
+    onPlugin(id)
+  }
+  return (
+    <div className="assist assist--tip">
+      <div className="assist__head">
+        <strong>Claude просит подключить {request.title}</strong>
+        <span className="assist__hint">{request.purpose}</span>
+      </div>
+      <div className="assist__body">
+        Claude Code перезапустится в этой же сессии: переписка и окно сохранятся, плагин будет
+        доступен до смены проекта.
+      </div>
+      <div className="assist__actions">
+        <button className="btn btn--ghost" disabled={busy} onClick={() => answer(null)}>
+          Не надо
+        </button>
+        <button className="btn btn--primary" disabled={busy} onClick={() => answer(request.id)}>
+          {busy ? 'Перезапускаю…' : 'Подключить и перезапустить'}
+        </button>
+      </div>
     </div>
   )
 }

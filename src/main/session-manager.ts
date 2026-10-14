@@ -56,6 +56,8 @@ export class SessionManager extends EventEmitter {
   /** Плагины, включённые на этой сессии (кнопка «подключить»); сбрасываются со сменой проекта. */
   private readonly enabledPlugins = new Set<string>()
   private pluginRequest: string | null = null
+  /** Идёт перезапуск ради плагина — повторный вызов (двойной клик, Telegram) не нужен. */
+  private restarting = false
 
   private status: SessionStatus = 'stopped'
   private title: string | null = null
@@ -141,7 +143,11 @@ export class SessionManager extends EventEmitter {
     // вопрос о доверии к папке, который появляется в первые секунды.
     const assistant = new Assistant(session, extraArgs.length > 0)
     this.assistant = assistant
-    assistant.on('state', () => this.pushSession())
+    assistant.on('state', (state: AssistantState) => {
+      // Новый ход (в окне, в терминале или с телефона) — старая просьба уже не про него.
+      if (state.phase === 'executing' || state.phase === 'planning') this.pluginRequest = null
+      this.pushSession()
+    })
     assistant.on('action', (event: TranscriptEvent) => this.emit('transcript', event))
     assistant.on('say', (text: string) => this.emit('say', text))
     assistant.prepareRepo()
@@ -253,6 +259,7 @@ export class SessionManager extends EventEmitter {
   /** Сказанное или напечатанное — решает ассистент: новая задача, «выполняй», замечание, стоп. */
   submit(text: string): void {
     if (!this.session?.isRunning || !this.assistant) return
+    this.pluginRequest = null
     void this.assistant.handleUserText(text)
   }
 
@@ -374,9 +381,13 @@ export class SessionManager extends EventEmitter {
   private withoutPluginMarker(message: ChatMessage, track: boolean): ChatMessage {
     if (message.role !== 'assistant') return message
     const { plugin, text } = parsePluginRequest(message.text)
-    if (track && plugin && !this.enabledPlugins.has(plugin.id)) {
-      this.pluginRequest = plugin.id
-      this.pushSession()
+    if (track) {
+      // Просьба относится к последнему ответу: новый ответ без маркера её снимает.
+      const next = plugin && !this.enabledPlugins.has(plugin.id) ? plugin.id : null
+      if (next !== this.pluginRequest) {
+        this.pluginRequest = next
+        this.pushSession()
+      }
     }
     return text === message.text ? message : { ...message, text }
   }
@@ -385,18 +396,36 @@ export class SessionManager extends EventEmitter {
    * Подключает плагин и перезапускает Claude Code в той же сессии (`--resume`):
    * переписка, окно и настройки приложения остаются. Только между задачами.
    */
-  async enablePlugin(id: string): Promise<SessionInfo> {
+  async enablePlugin(id: string): Promise<SessionInfo | null> {
+    // Повторный вызов (двойной клик, окно и Telegram одновременно) — молча выходим.
+    if (this.restarting) return this.info
     const session = this.session
     const plugin = findPlugin(id)
-    if (!session || !plugin) throw new Error('Нет открытого проекта или неизвестный плагин')
-    if (this.assistant?.state.phase !== 'ready') {
-      throw new Error('Дождитесь конца задачи: перезапуск оборвал бы работу Claude')
+    const problem = !session || !plugin
+      ? 'Нет открытого проекта или неизвестный плагин'
+      : this.assistant?.state.phase !== 'ready'
+        ? 'Дождитесь конца задачи: перезапуск оборвал бы работу Claude'
+        : null
+    if (problem || !session || !plugin) {
+      this.fail({ code: 'unknown', message: 'Не удалось подключить плагин', hint: problem ?? undefined })
+      throw new Error(problem ?? 'Не удалось подключить плагин')
     }
+    // Флаг и сброс просьбы — до первого await, иначе второй вызов проскочит.
+    this.restarting = true
+    this.pluginRequest = null
     this.enabledPlugins.add(plugin.id)
-    const info = await this.start(session.projectDir, session.sessionId)
-    // Ассистент ставит текст в очередь, пока Claude Code запускается.
-    this.submit(`Плагин ${plugin.title} подключён, сессия перезапущена. Продолжай задачу.`)
-    return info
+    try {
+      const info = await this.start(session.projectDir, session.sessionId)
+      // Ассистент ставит текст в очередь, пока Claude Code запускается.
+      this.submit(`Плагин ${plugin.title} подключён, сессия перезапущена. Продолжай задачу.`)
+      return info
+    } catch (err) {
+      // start() сам сообщил причину; плагин при неудаче не считаем подключённым.
+      this.enabledPlugins.delete(plugin.id)
+      throw err
+    } finally {
+      this.restarting = false
+    }
   }
 
   /** Отказ от просьбы Claude: плагин не подключаем, карточка пропадает. */

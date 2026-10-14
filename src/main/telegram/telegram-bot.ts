@@ -474,7 +474,9 @@ export class TelegramBot {
         return
       }
       await this.answerCallback(token, query.id, 'Перезапускаю с плагином')
-      void this.sessions.enablePlugin(action.id).catch(() => undefined)
+      void this.sessions.enablePlugin(action.id).catch((err: unknown) => {
+        void this.send(`⚠️ Не удалось подключить плагин: ${describe(err)}`)
+      })
       return
     }
 

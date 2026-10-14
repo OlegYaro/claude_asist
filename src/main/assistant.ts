@@ -32,6 +32,7 @@ import {
   parsePlanOverride
 } from '../shared/intents'
 import { answerFor, parseQuestions, type QuestionItem } from './questions'
+import { parsePluginRequest } from '../shared/plugins'
 import type {
   ActionKind,
   AssistantPhase,
@@ -471,14 +472,14 @@ export class Assistant extends EventEmitter {
   }
 
   /** Ход закончен: Stop-хук отпустил Claude (транскрипт об этом пишет с задержкой). */
-  private finishTurn(): void {
+  private finishTurn(quiet = false): void {
     // Ход не закончен, только если диалог (план, вопрос, согласие) реально ждёт ответа.
     if (this.gate || this.held) return
     if (this.phase === 'ready' || this.phase === 'starting') return
     this.plan = null
     this.question = null
     this.setPhase('ready')
-    this.say('Готово.')
+    if (!quiet) this.say('Готово.')
   }
 
   /** План остаётся в чате отдельной карточкой и в панели «Проект» — и после одобрения. */
@@ -655,7 +656,7 @@ export class Assistant extends EventEmitter {
     const tool = input.tool_name
     const summary = summarizeToolInput(tool, input.tool_input, this.session.projectDir)
 
-    if (input.hook_event_name === 'Stop') return this.onStop()
+    if (input.hook_event_name === 'Stop') return this.onStop(input.last_assistant_message)
     if (input.hook_event_name === 'UserPromptSubmit') {
       this.onPromptSubmitted()
       return null
@@ -717,7 +718,13 @@ export class Assistant extends EventEmitter {
    * красные — не даём закончить и отдаём Claude вывод ошибок. Зелёные — один раз
    * просим независимое ревью субагентом. Так «готово» значит «проверено».
    */
-  private async onStop(): Promise<PermissionDecision> {
+  private async onStop(lastMessage?: string): Promise<PermissionDecision> {
+    // Claude просит подключить плагин и закончил ход: задача продолжится после
+    // перезапуска, так что ни проверки, ни ревью, ни коммит сейчас не нужны.
+    if (lastMessage && parsePluginRequest(lastMessage).plugin) {
+      this.finishTurn(true)
+      return null
+    }
     const decision = await this.qualityGate()
     if (!decision) {
       await this.commitTask()
