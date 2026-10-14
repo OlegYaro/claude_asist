@@ -8,7 +8,9 @@
  */
 const FOOTER_HINTS = ['shift+tabtocycle', 'forshortcuts']
 // «(?!\d+\.)»: в стартовых диалогах курсор «❯» тоже стоит у рамки, но перед номером пункта.
-const INPUT_BOX = /[│┃][>❯](?!\d+\.)/
+// Новый TUI рисует поле ввода без боковых «│»: «❯» между двух горизонтальных линий,
+// а в диалоге доверия за ним идёт «Yes,I…» без номера.
+const INPUT_BOX = /(?:[│┃]|─)[>❯](?!\d+\.|Yes,|No,)/
 
 export function isTuiReady(flatScreen: string): boolean {
   return FOOTER_HINTS.some((hint) => flatScreen.includes(hint)) || INPUT_BOX.test(flatScreen)

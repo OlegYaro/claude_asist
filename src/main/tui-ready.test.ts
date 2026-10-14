@@ -19,3 +19,11 @@ test('не готов в диалоге доверия и на пустом эк
   assert.equal(isTuiReady('│❯1.No,exit│'), false)
   assert.equal(isTuiReady('│❯1.UsethisandallfutureMCPserversinthisproject│2.Usethisserver│3.Continuewithoutusingthisserver│'), false)
 })
+
+test('готов по полю ввода без боковых рамок (новый TUI)', () => {
+  assert.equal(isTuiReady('────────❯Try"fixlinterrors"────────'), true)
+})
+
+test('не готов в диалоге доверия без номеров пунктов', () => {
+  assert.equal(isTuiReady('──────❯Yes,Itrustthisfolder'), false)
+})
