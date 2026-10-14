@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Claude Voice Desk — Electron-приложение (macOS 26+, arm64) для голосового управления Claude Code CLI. Весь интерфейс, комментарии в коде и ответы — на русском. Подробности и найденные экспериментально ловушки — в `README.md` (разделы «Что выяснилось»): прочитай их перед правками в PTY, хуках или транскрипте.
+Claude Voice Desk — Electron-приложение (macOS 26+, arm64) для голосового управления Claude Code CLI. Весь интерфейс, комментарии в коде и ответы — на русском. Подробности и найденные экспериментально ловушки — в `README.ru.md` (разделы «Что выяснилось»): прочитай их перед правками в PTY, хуках или транскрипте.
 
 ## Команды
 

@@ -1,293 +1,111 @@
 # Claude Voice Desk
 
-Десктопное приложение для управления Claude Code голосом.
+[English](README.md) · [Русский](README.ru.md)
 
-Выбираете папку проекта → в ней запускается Claude Code → говорите, что нужно сделать →
-речь распознаётся локально → из расшифровки собирается чёткий промт → вы его подтверждаете →
-он уходит в терминал. Рядом видно живой список действий и финальный ответ, а сам терминал
-остаётся настоящим окном Terminal.app, в которое можно вмешаться руками.
+**Control [Claude Code](https://docs.claude.com/en/docs/claude-code) with your voice.** A native-feeling macOS desktop app that wraps the Claude Code CLI: you talk, it transcribes locally, Claude plans and works, and the app makes sure "done" actually means *checked*.
 
-## Требования
+![macOS 26+](https://img.shields.io/badge/macOS-26%2B-black) ![Apple Silicon](https://img.shields.io/badge/arch-arm64-blue) ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 
-- Mac на Apple Silicon (сборка только под arm64).
-- macOS 26 или новее — нужен Speech framework для локального распознавания.
-- Xcode Command Line Tools: `xcode-select --install`. Нужны уже на `npm install`
-  (пересборка `node-pty` под Electron) и для `swiftc` (модуль распознавания).
-- Node.js 22.18 или новее, рекомендуется 24 (в репозитории есть `.nvmrc`).
-- Claude Code CLI: установлен и выполнен вход (`claude` запускается из терминала).
-  Приложение ищет `claude` через login-шелл; если не нашло — путь задаётся в настройках.
+## Why this exists
 
-## Установка
+Claude Code is a great terminal tool, but typing long, precise prompts is slow, and watching a TUI scroll by is a poor way to stay in control of what an agent is doing to your code. Claude Voice Desk exists to fix three things:
+
+1. **Talking is faster than typing.** Dictate a rambling request; Claude figures out what you mean. Speech recognition runs fully on-device through the macOS Speech framework: no cloud, no API key, no model downloads.
+2. **You should see what the agent does, not scroll for it.** Actions (edits, commands, reads, permissions, checks, reviews) are grouped by task with icons, filters and colored diffs, next to a clean chat. The real Terminal.app window stays available, and you can step in by hand at any time.
+3. **"Done" should mean verified.** The app runs your project's checks and an independent code review before a task counts as finished, keeps a one-click rollback point, and holds risky commands until you say yes.
+
+It is built for people who want to drive an AI coding agent hands-free (or from a phone) without giving up safety.
+
+## Features
+
+- **Voice in, voice out.** Always-on microphone with auto-send after a pause. Replies are read aloud; speaking interrupts them (with echo filtering so the app does not hear itself).
+- **Claude decides how to work.** A question gets an answer. A small fix is done immediately. A hard task enters plan mode, and the plan is shown in full and held until you say "go" ("выполняй" in Russian). Say "with a plan" or "just do it" to override.
+- **Quality gate.** On a task with edits, the app runs your project's checks (typecheck, linter, tests from `package.json`, pytest/ruff/mypy, cargo, go). Failures go back to Claude to fix, up to three rounds. A separate read-only `claude -p` run then reviews the diff against a JSON schema.
+- **Rollback.** A restore point is taken before the first edit using a temporary git index, so your working files, index and branch are never touched. "Roll back" returns the project to its pre-task state.
+- **Safe approvals.** Claude runs in normal permission mode, never auto mode (which approves plans and risky commands by itself). Dangerous commands (`rm -rf`, `sudo`, `git push --force`, ...) always wait for your confirmation.
+- **Model routing.** Optional auto mode runs the session on `opusplan`; the plan assigns each step to Haiku, Sonnet, Opus or Fable, steps run as subagents on those models, and a completeness check escalates unfinished steps to a stronger model. Or pin one model manually.
+- **Project panel.** Current plan and status, files changed with +/- and diffs, check and review results, detected stack and commands, and CLAUDE.md notes.
+- **History.** Browse past requests with outcomes and resume a previous session.
+- **Telegram remote control.** Send tasks, approve plans, answer Claude's questions and confirm risky commands from your phone, including voice messages (transcribed locally).
+- **Optional prompt cleanup.** With an Anthropic API key, a rambling spoken request is rewritten into a crisp prompt before it is sent. Without a key, your words go to Claude as-is.
+- **Privacy by design.** Tokens and keys are encrypted with macOS `safeStorage` and never reach the UI process. The app writes nothing into your project except git commits (and those can be turned off).
+
+## Requirements
+
+- Mac with Apple Silicon (arm64 only).
+- macOS 26 or later (needed for the Speech framework's on-device recognition).
+- Xcode Command Line Tools: `xcode-select --install` (required at `npm install` to rebuild `node-pty` and to compile the Swift speech helper with `swiftc`).
+- Node.js 22.18+ (24 recommended; there is an `.nvmrc`).
+- [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) installed and signed in (`claude` must run in your terminal). The app finds it through a login shell, or you can set the path in settings.
+
+## Install
 
 ```bash
 git clone https://github.com/OlegYaro/claude_asist.git
 cd claude_asist
 npm install
-npm run app       # сборка + установка в /Applications, дальше запуск по иконке
+npm run app       # builds, packages and installs into /Applications
 ```
 
-`npm run app` собирает модуль распознавания, упаковывает приложение и копирует его в
-«Программы» (нужны права на запись в `/Applications`); запущенная копия при этом закрывается.
-При первом запуске macOS спросит доступ к микрофону и разрешение на управление Terminal.app
-(«Конфиденциальность и безопасность → Автоматизация»); без второго окно терминала не откроется,
-приложение покажет команду для ручного подключения.
+Then launch **Claude Voice Desk** from Applications. On first run macOS asks for microphone access and for permission to control Terminal.app (*Privacy & Security → Automation*). Without the latter the terminal window will not open; the app shows a command you can paste to attach manually.
 
-Приложение подписано ad-hoc, поэтому работает только на том Mac, где собрано: dmg от другого
-человека Gatekeeper заблокирует. Каждый ставит себе из исходников. После пересборки macOS может
-заново спросить разрешение на микрофон, потому что ad-hoc подпись меняется вместе с бинарником.
+The build is ad-hoc signed, so it only runs on the Mac that built it. A DMG from another machine will be blocked by Gatekeeper, so everyone installs from source. After a rebuild macOS may ask for microphone access again.
 
-Режим разработки и dmg:
+Development:
 
 ```bash
-npm run build:stt   # один раз: нативный модуль распознавания речи
-npm run dev         # запуск в режиме разработки
-npm run dist        # dmg в dist/
+npm run build:stt   # once: compile the native speech helper
+npm run dev         # run in development mode
+npm run dist        # produce a DMG in dist/
+npm run typecheck && npm test
 ```
 
-Иконка рисуется скриптом (`npm run icon` → `build/icon.icns`).
+## Usage
 
-## Данные и приватность
+1. Open a project folder. Claude Code starts in it (it will ask to trust unfamiliar folders; answer in the Terminal window).
+2. Talk. Your words are appended to the input and sent after a pause (3 s by default).
+3. Review the plan if there is one, then say "go" to run it, "stop" to cancel, or anything else to give feedback.
+4. Watch the Actions panel. When the work finishes, checks and review run automatically; say "roll back" to undo the task.
 
-Всё личное лежит вне репозитория, в папке данных приложения:
-`~/Library/Application Support/Claude Voice Desk` у установленного и
-`~/Library/Application Support/claude-voice-desk` у запущенного через `npm run dev`
-(это разные наборы настроек). Там `settings.json` (недавние проекты, id привязанного чата
-Telegram) и зашифрованные через `safeStorage` (связка ключей macOS) токен бота и API-ключ.
-В папку проекта приложение ничего не пишет, кроме git-коммитов, если включён авто-git.
+Voice commands are Russian by default (the UI, replies and command words are in Russian); the speech engine and protocol live in `src/main/stt.ts`, `src/main/protocol.ts` and `src/shared/intents.ts` if you want to adapt them to another language.
 
-Две настройки по умолчанию включены и действуют на открытый проект без вопросов, их стоит знать:
-«Git автоматически» — папка без репозитория получает `git init`, задача с правками коммитится
-после зелёных проверок; «Давать согласие на действия автоматически» — согласие на правки и
-команды Claude даётся само (рискованные команды всё равно спрашивают). Обе выключаются в настройках.
+## Telegram control
 
-Интерфейс, меню и ответы Claude — на русском: сессия запускается с
-`--append-system-prompt`, который просит отвечать по-русски.
+1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
+2. In app settings, *Remote control*, paste the token and press "Get code".
+3. Send `/start <code>` to the bot (the code is valid for 24 hours).
 
-API-ключ Anthropic **не обязателен**: без него расшифровка отправляется как есть.
-С ключом каждая новая задача перед отправкой автоматически превращается из сбивчивой
-устной реплики в чёткую формулировку. Ключ задаётся в настройках и хранится в связке ключей macOS через `safeStorage`;
-в renderer он не передаётся никогда.
+Plain text goes to Claude exactly like speech. Commands: `/projects`, `/status`, `/history`, `/stop`. Buttons appear for plans, questions and risky commands, and only work on the latest message in the current stage. Only the bound chat is obeyed; strangers get no reply. Only one running copy of the app can poll a given bot.
 
-## Как это устроено
+## How it works
 
-### PTY принадлежит приложению, Terminal.app — смотровое окно
+- The app owns the pseudo-terminal (`node-pty`) running `claude`; Terminal.app is just a viewing window attached over a Unix socket by a tiny bridge (`resources/bridge.js`). Closing the window does not kill the session.
+- The chat and Actions list come from Claude Code's structured JSONL transcript (`~/.claude/projects/...`), read incrementally by a tolerant parser, not from scraping the terminal.
+- Source of truth for plan, prompt submission and end of turn is Claude Code's HTTP hooks (`PermissionRequest`, `PreToolUse`, `UserPromptSubmit`, `Stop`) served by a local server. The plan is held inside a hook until you approve.
+- Speech-to-text is a Swift helper over `DictationTranscriber` (Russian is not available in `SpeechTranscriber`); audio is recorded as 16 kHz WAV in the renderer.
 
-Приложение само создаёт псевдотерминал (`node-pty`) и запускает в нём `claude`.
-Окно Terminal.app подключается к этому PTY через Unix-сокет с помощью маленького
-моста `resources/bridge.js`.
-
-Что это даёт:
-
-- отправка промта — обычный `pty.write()`, а не инъекция нажатий через AppleScript
-  (та требует разрешения Accessibility и плохо работает с кириллицей);
-- закрытие окна терминала не убивает сессию — можно переподключиться;
-- пользователь видит и может вмешаться в настоящий TUI, включая ответы на запросы разрешений.
-
-Кадр протокола: `[тег:1][длина:4 BE][данные]`, тег `0x00` — поток терминала, `0x01` — управление
-(например, размер окна при SIGWINCH). Для случая без Node есть запасной сырой сокет под `nc -U`.
-
-### Список задач читается из транскрипта, а не из вывода терминала
-
-Claude Code параллельно пишет структурированный JSONL в
-`~/.claude/projects/<папка>/<session-id>.jsonl`. Приложение задаёт `--session-id` само,
-находит этот файл и читает его инкрементально. Оттуда берутся вызовы инструментов,
-их результаты, тексты ответов, заголовок сессии и признак конца хода
-(`system` / `turn_duration`).
-
-Разбирать ANSI-поток TUI для этого было бы бессмысленно: это графика, а не данные.
-
-Формат внутренний и может меняться между версиями CLI, поэтому парсер терпимый —
-неизвестные типы записей и незнакомые инструменты игнорируются, а не ломают разбор.
-Трафик субагентов (`isSidechain`) в основной чат не попадает.
-
-## Что выяснилось при разработке
-
-Три вещи, найденные экспериментально; каждая ломала бы приложение молча.
-
-**1. Маркеры окружения выключают транскрипт.** Если процессу `claude` достаётся
-переменная `CLAUDE_CODE_CHILD_SESSION` (она наследуется, когда приложение запущено
-изнутри другой сессии Claude Code, и переживает даже login shell), Claude Code считает
-себя вложенной сессией и **перестаёт писать транскрипт** — без ошибки, только строчкой
-в интерфейсе. Панель задач при этом навсегда осталась бы пустой. Поэтому все маркеры
-`CLAUDE_*` вырезаются из окружения перед запуском (`src/main/paths.ts`).
-
-**2. Русского нет в `SpeechTranscriber`.** В macOS 26 два модуля распознавания:
-`SpeechTranscriber` (30 локалей, русского среди них нет) и `DictationTranscriber`
-(54 локали, включая `ru-RU`). Дополнительная ловушка: `supportedLocale(equivalentTo:)`
-только нормализует локаль и **не проверяет поддержку** — для `ru-RU` он честно возвращает
-`ru-RU` даже у движка, который русского не умеет. Поэтому принадлежность проверяется явно
-по `supportedLocales`, а движок выбирается под язык (`native/stt-helper/main.swift`).
-
-**3. В незнакомой папке Claude Code сначала спрашивает о доверии.** До ответа
-пользователя транскрипт не пишется. Поиск файла ждёт до пяти минут, а интерфейс
-показывает подсказку «ответьте в окне терминала», иначе пустой список задач
-выглядел бы поломкой.
-
-## Ассистент: голос → Claude сам решает → проверенный результат
-
-Микрофон слушает постоянно (выключается кнопкой). Сказанное дописывается в поле ввода и
-уходит само после паузы (по умолчанию 3 секунды) — можно договорить, и текст допишется.
-Ваши слова уходят Claude как есть: как действовать, он решает сам по протоколу в системном
-промте сессии (`src/main/protocol.ts`):
-
-- **вопрос** → просто ответ, без плана и без правок;
-- **мелкая правка** → делает сразу и проверяет;
-- **сложная задача** → сам входит в план (`EnterPlanMode`), план показывается крупно —
-  «выполняй» запускает работу, любая другая фраза — замечание, «стоп» — отмена.
-
-Явно: «с планом, …» / «сначала план …» — всегда план; «просто сделай …» / «без плана …» — сразу.
-
-### Качество: «готово» значит «проверено»
-
-1. **Стандарты в протоколе**: следовать паттернам проекта, без заглушек и TODO, исправлять
-   причину, а не глушить ошибки, минимальный дифф, тесты на новое поведение, доказательства
-   в отчёте.
-2. **Точка отката** перед первой правкой (`git stash create` — рабочие файлы не трогаются).
-   «Откати» возвращает проект к состоянию до задачи.
-3. **Барьер проверок** (Stop-хук): когда Claude хочет закончить задачу с правками,
-   приложение запускает проверки проекта (`src/main/quality.ts`: типы, линтер, тесты из
-   package.json, pytest/ruff/mypy, cargo, go). Красные — Claude получает вывод ошибок и
-   исправляет причину (до трёх попыток).
-4. **Независимое ревью** (`src/main/reviewer.ts`): отдельный запуск `claude -p` в чистом
-   контексте, только чтение, ответ по JSON-схеме. Существенные замечания уходят Claude на
-   исправление.
-5. **Автовыбор модели** (тумблер в настройках, `src/main/model-routing.ts`): сессия идёт на
-   `opusplan`, в плане раздел «Модели» распределяет шаги по Haiku/Sonnet/Opus, шаги
-   выполняют субагенты с этой моделью. Перед ревью `claude -p --model sonnet` сверяет
-   результат с планом; недоделанный шаг уходит модели на ступень сильнее (до двух раз).
-   Выключено — вся сессия на модели, выбранной вручную (`--model`).
-6. **CLAUDE.md**: если его нет, приложение предлагает «изучи проект» (`/init`).
-7. Согласия даёт приложение (каждое видно в «Действиях»); рискованные команды (`rm -rf`,
-   `sudo`, `git push --force`…) ждут вашего «да» — даже если Bash разрешён в настройках.
-
-### Что видно в окне
-
-- **Действия** сгруппированы по вашим задачам (последняя раскрыта, прошлые свёрнуты), у каждого
-  типа свой значок и цвет: правка, команда, чтение, согласие, проверка, ревью, план, точка
-  отката. Фильтры: правки, команды, проверки, согласия, чтение.
-- **План** остаётся в чате отдельной карточкой и после одобрения.
-- **Панель «Проект»** (кнопка в верхней строке): текущий план со статусом; что изменилось в
-  последней задаче — файлы с +/− и цветной дифф по клику, кнопка «Откатить»; итоги проверок
-  и ревью; стек и команды проекта; описание и архитектура из CLAUDE.md.
-
-Точка отката — коммит со всем рабочим состоянием, включая новые файлы, собранный во
-временном индексе (`snapshotTree` в `src/main/quality.ts`): ваши файлы, индекс и ветка не
-меняются. «Что изменилось» — разница между этим снимком и текущим.
-
-### Как это сделано
-
-- **HTTP-хуки Claude Code** (`src/main/hook-server.ts`, передаются через `--settings`):
-  `PermissionRequest` — приложение отвечает на запросы разрешений; `PreToolUse` для Bash —
-  проверка рискованных команд перед КАЖДЫМ запуском, даже если Bash разрешён правилами.
-- **План придерживается в хуке**, пока вы не ответили: диалог одобрения в терминале не
-  появляется, и одобрить план без вас некому. «Выполняй» — хук отпускается, приложение
-  дожидается диалога и выбирает «Yes, manually approve edits». Замечание — отказ хука с
-  текстом замечания.
-- Сессия запускается в обычном режиме (`--permission-mode default`), а не в авто-режиме.
-
-### Что выяснилось
-
-- **Авто-режим одобряет план сам.** Его классификатор через минуту-другую подтверждал план
-  без «выполняй» и разрешал `rm -rf` без вопросов. Поэтому — обычный режим и свои хуки.
-- **Вариант «1» в диалоге плана — «Yes, and use auto mode»**: он снова включает авто-режим.
-  Номер варианта «manually approve» приложение берёт с экрана.
-- **Транскрипт пишется с задержкой**: строка с планом могла появиться в файле через
-  минуты. План и вопросы берутся из хука, транскрипт — для чата и действий.
-- **На вопросы Claude (AskUserQuestion) отвечает хук, а не клавиши.** Вопросов может быть
-  несколько, с выбором нескольких вариантов, и одна цифра в TUI отвечала только на первый.
-  Хук PermissionRequest возвращает `allow` и `updatedInput` с полем `answers`
-  (`{ "текст вопроса": "вариант" }`, несколько вариантов через «, »). Диалог в терминале
-  тогда не появляется (проверено на CLI 2.1.286).
-- **TUI перерисовывает только изменения**: однажды нарисованный диалог больше не приходит
-  текстом. Ожидая диалог, смотрим весь вывод с момента прихода хука.
-- **В диалоге доверия курсор стоит на «No, exit»** — Enter закрывает Claude. Приложение
-  жмёт стрелку вниз и Enter, только убедившись, что курсор на «Yes».
-- **Путь Unix-сокета на macOS — не длиннее 104 байт.** Сокеты в `~/Library/Application
-  Support/…` не помещались, запуск падал посередине и чат оставался пустым. Теперь они в
-  `/tmp/cvd-<uid>/`.
-- **Файл транскрипта появляется только с первым сообщением**, поэтому ждём его без таймаута.
-- **Серая подсказка следующей фразы склеивалась с нашим текстом** — Claude Code видел
-  невидимый символ и требовал ручной Enter. Подсказки выключены (`promptSuggestionEnabled`).
-  По той же причине нельзя «чистить» поле через Ctrl+U — он тоже считается невидимым символом.
-- **Текст и Enter одним куском TUI принимает за вставку** — Enter отправляется отдельно.
-  Отправку подтверждает хук `UserPromptSubmit`; нет подтверждения — приложение жмёт Enter
-  ещё раз и сообщает об ошибке, а не молчит.
-- **Субагенты в этой версии CLI уходят в фон**, и Claude заканчивал работу, не дождавшись
-  ревью. Поэтому ревью — отдельный синхронный `claude -p`. При автовыборе модели шаги
-  всё же идут субагентам, поэтому сессия запускается с `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`:
-  субагенты синхронны, и Stop приходит после них (проверено на CLI 2.1.299, `background_tasks`
-  во входе Stop пуст). Хуки инструментов субагента приходят с тем же `session_id` и `agent_id`.
-- **`/model` в живой сессии не годится для переключения**: он сохраняет модель в глобальные
-  настройки пользователя, а при тёплом кэше спрашивает подтверждение. Модель задаётся
-  флагом `--model` при запуске, по шагам — параметром `model` инструмента Agent.
-- **Конец хода** берётся из Stop-хука, а не из транскрипта (тот пишется с задержкой).
-- **Озвучка играет в окне, а не через динамик `say`.** Эхоподавление Chromium вычитает из
-  микрофона только звук самого приложения. Если бы говорил `say`, микрофон слышал бы речь
-  целиком, и перебить её голосом было бы нельзя. Поэтому `say -o … --file-format=WAVE`
-  синтезирует фразу в файл (~0,6 с), окно играет его и сообщает о конце. Пока звучит одна
-  фраза, следующая уже синтезируется. Без окна говорит сам `say`.
-- **Текст для `say` всегда идёт после `--`**: кусок ответа Claude вида «-f путь» иначе стал
-  бы опцией.
-- **Пока приложение говорит, микрофон слушает с повышенным порогом**: стоит вам
-  заговорить, и речь приложения обрывается. Если распознанное почти дословно и по порядку слов совпадает с фразой,
-  которая звучала в это же время, это эхо из колонок. Оно отбрасывается, а на кнопке
-  микрофона появляется «Похоже на эхо — повторите» (`src/shared/echo.ts`). Сверять со
-  всем прочитанным ответом и по набору слов нельзя: реплика на ту же тему тоже
-  отбрасывалась бы. Иначе
-  «скажите „выполняй“» одобрило бы план само. Голосовое прерывание можно выключить в
-  настройках, тогда во время речи микрофон глохнет, как раньше.
-- **Компактная «Milena» звучит как робот.** Siri-голоса для `say` недоступны. Лучшее, что
-  есть, — «улучшенный» и «премиум» голоса (Универсальный доступ → Устное содержимое).
-  Приложение выбирает их само, а список перечитывает при открытии настроек.
-
-## Управление с телефона через Telegram
-
-1. Создайте бота у [@BotFather](https://t.me/BotFather) и скопируйте токен.
-2. В настройках приложения → «Управление с телефона» вставьте токен и нажмите «Получить код».
-3. Отправьте боту `/start <код>` (или откройте ссылку из настроек). Код действует сутки.
-
-Бот запускается сам вместе с приложением, ещё до выбора папки. Любой текст боту уходит Claude так же,
-как сказанное голосом: «выполняй», «стоп», «откати», «с планом, …» работают как обычно.
-`/projects` — открыть недавний проект, `/status` — что происходит, `/history` — последние запросы
-с итогами и прошлые сессии, `/stop` — прервать задачу.
-
-На телефон приходят: открытие проекта, план с кнопками «Выполняй / Отмена», вопрос Claude с
-вариантами, рискованная команда с кнопками «Да / Нет», финальный ответ и короткие сообщения
-(«Готово», «Проверки не прошли»). Кнопки работают только на последнем сообщении и только пока
-этап не сменился: старое «Выполняй» не уйдёт Claude новой задачей.
-
-- Токен хранится в связке ключей (`safeStorage`) и не попадает в renderer.
-- Команды принимаются только из привязанного чата; посторонним бот не отвечает.
-- Сообщения, отправленные, пока приложение было закрыто, не выполняются.
-- Голосовые сообщения (до 5 минут) распознаются локально тем же движком, что и микрофон:
-  Ogg/Opus перекодируется в WAV 16 кГц системным `afconvert` (ffmpeg не нужен). Бот
-  присылает распознанный текст «🎙 …» и передаёт его Claude.
-- Один бот может опрашивать только одна копия приложения: при запущенных `npm run dev` и
-  установленном приложении вторая покажет ошибку.
-
-## Распознавание речи
-
-Локально, офлайн, без ключей и без загрузки моделей вручную — через Speech framework macOS.
-Запись идёт в WAV 16 кГц моно прямо в renderer (`AudioContext` + `AudioWorklet`), что
-позволяет обойтись без `ffmpeg`.
-
-Изначально планировался whisper.cpp, но он требует cmake для сборки и модель на 0.6–1.6 ГБ.
-Нативный движок даёт те же свойства (офлайн, бесплатно, без ключей) без сборки и загрузок.
-Другой движок можно подключить за интерфейсом `SttProvider` (`src/main/stt.ts`).
-
-## Структура
+The Russian [README.ru.md](README.ru.md) has a long list of non-obvious TUI, hook and transcript pitfalls found by experiment. Read it before touching PTY, hooks or the transcript parser. `CLAUDE.md` describes the architecture.
 
 ```
-src/main/          основной процесс: PTY, мост, транскрипт, распознавание, промт, секреты
-src/preload/       мост в renderer (contextBridge)
-src/renderer/      интерфейс на React
-src/shared/        типы и контракт IPC, общие для обеих сторон
-native/stt-helper/ Swift-модуль распознавания речи
-resources/bridge.js  мост, запускаемый внутри Terminal.app
+src/main/          main process: PTY, bridge, transcript, hooks, assistant, quality, Telegram
+src/preload/       contextBridge into the renderer
+src/renderer/      React UI
+src/shared/        types and IPC contract
+native/stt-helper/ Swift speech recognition helper
+resources/         bridge.js for Terminal.app
 ```
 
-## Что пока не сделано
+## Limitations
 
-- **Windows.** Платформозависимое (поиск бинарей, пути, PTY) изолировано за адаптерами,
-  но не реализовано и не проверено.
-- **Подпись и нотаризация** сборки.
+- macOS on Apple Silicon only. Windows adapters are isolated but not implemented.
+- Not notarized; ad-hoc signed.
+- The transcript format is internal to Claude Code and may change between CLI versions. Verified against CLI 2.1.x.
+- The UI language is Russian.
+
+## Contributing
+
+Issues and pull requests are welcome. Before sending a change run `npm run typecheck`, `npm test` and `npm run build`. Pure logic gets a `*.test.ts` next to it.
+
+## License
+
+[MIT](LICENSE)
