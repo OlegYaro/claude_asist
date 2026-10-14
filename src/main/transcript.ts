@@ -5,6 +5,7 @@ import { join, relative, isAbsolute } from 'node:path'
 import { claudeProjectsDir } from './paths'
 import { promptText } from './history-logic'
 import { parseQuestions } from './questions'
+import { ModelTracker } from './model-tracker'
 import type { ChatMessage, TodoItem, ToolTask, TranscriptEvent } from '../shared/types'
 
 /**
@@ -215,6 +216,7 @@ export class TranscriptTailer extends EventEmitter {
   private openTasks = new Map<string, ToolTask>()
   /** Накопленный план из TaskCreate/TaskUpdate — этот CLI использует их вместо TodoWrite. */
   private taskPlan = new Map<string, TodoItem>()
+  private models = new ModelTracker()
 
   constructor(
     private readonly filePath: string,
@@ -315,6 +317,10 @@ export class TranscriptTailer extends EventEmitter {
     })
   }
 
+  private emitModel(model: string | null): void {
+    if (model !== null) this.emitEvent({ kind: 'mode', permissionMode: null, model })
+  }
+
   private emitEvent(event: TranscriptEvent): void {
     this.emit('event', event)
   }
@@ -401,9 +407,7 @@ export class TranscriptTailer extends EventEmitter {
     if (typeof message !== 'object' || message === null) return
     const m = message as Record<string, unknown>
 
-    if (typeof m['model'] === 'string') {
-      this.emitEvent({ kind: 'mode', permissionMode: null, model: m['model'] })
-    }
+    this.emitModel(this.models.setMain(m['model']))
 
     const content = m['content']
     if (!Array.isArray(content)) return
@@ -442,6 +446,9 @@ export class TranscriptTailer extends EventEmitter {
         }
         this.openTasks.set(task.id, task)
         this.emitEvent({ kind: 'task-start', task })
+        if (name === 'Agent' || name === 'Task') {
+          this.emitModel(this.models.agentStart(task.id, (b['input'] as { model?: unknown } | undefined)?.model))
+        }
 
         if (name === 'ExitPlanMode') {
           const plan = (b['input'] as { plan?: unknown } | undefined)?.plan
@@ -520,6 +527,7 @@ export class TranscriptTailer extends EventEmitter {
           this.emitEvent({ kind: 'task-end', id, state: 'error', error: 'прервано' })
         }
         this.openTasks.clear()
+        this.emitModel(this.models.reset())
         this.emitEvent({ kind: 'turn-end' })
         continue
       }
@@ -528,6 +536,7 @@ export class TranscriptTailer extends EventEmitter {
       const id = b['tool_use_id']
       if (!this.openTasks.has(id)) continue
       this.openTasks.delete(id)
+      this.emitModel(this.models.agentEnd(id))
 
       const isError = b['is_error'] === true
       const errorText = isError ? truncate(toolResultText(b['content']), 200) || 'ошибка' : null

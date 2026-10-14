@@ -321,6 +321,10 @@ code {
   background: currentColor;
 }
 
+.chip--model {
+  color: var(--text);
+  font-weight: 600;
+}
 .chip--idle {
   color: var(--ok);
 }

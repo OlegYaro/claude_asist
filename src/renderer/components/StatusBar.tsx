@@ -1,3 +1,4 @@
+import { modelLabel } from '../../shared/model-label'
 import type { AssistantPhase, SessionInfo, SessionStatus } from '../../shared/types'
 
 interface Props {
@@ -75,7 +76,11 @@ export default function StatusBar({
       </div>
 
       <div className="status__meta">
-        {info.model && <span className="chip">{info.model}</span>}
+        {info.model && modelLabel(info.model) && (
+          <span className="chip chip--model" title={`Сейчас работает модель ${info.model}`}>
+            {modelLabel(info.model)}
+          </span>
+        )}
         {info.permissionMode && <span className="chip">{MODE_LABEL[info.permissionMode] ?? info.permissionMode}</span>}
         <span className={`chip chip--${PHASE_CHIP[info.assistant.phase]}`}>
           <span className="chip__dot" />

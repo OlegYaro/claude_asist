@@ -9,6 +9,7 @@ import { Assistant } from './assistant'
 import { loadSettings, rememberProject } from './settings'
 import { fileDiff, projectChanges, projectOverview } from './project-info'
 import { listSessions, sessionTranscript } from './history'
+import { modelLabel } from '../shared/model-label'
 import type {
   AppError,
   AssistantState,
@@ -327,7 +328,7 @@ export class SessionManager extends EventEmitter {
           break
         case 'mode':
           if (event.permissionMode !== null) this.permissionMode = event.permissionMode
-          if (event.model !== null) this.model = event.model
+          if (event.model !== null && modelLabel(event.model)) this.model = event.model
           this.pushSession()
           break
         case 'task-start':
