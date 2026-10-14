@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { LimitTracker, priceFor, usageCostUsd, weightUsage, WINDOW_SEC } from './limit-estimate.ts'
+import { LimitTracker, dominantModel, priceFor, usageCostUsd, weightUsage, WINDOW_SEC } from './limit-estimate.ts'
 
 const U = (input = 0, cacheWrite = 0, cacheRead = 0, output = 0) => ({ input, cacheWrite, cacheRead, output })
 
@@ -89,4 +89,17 @@ test('observe игнорирует нечисловые значения', () =>
   const t = new LimitTracker()
   t.observe(Number.NaN, win)
   assert.equal(t.snapshot().totalPct, null)
+})
+
+test('dominantModel: модель с наибольшим числом токенов', () => {
+  assert.equal(
+    dominantModel({
+      'claude-haiku-5-5': { inputTokens: 5, outputTokens: 5 },
+      'claude-opus-5-5': { inputTokens: 10, outputTokens: 20, cacheReadInputTokens: 1000 }
+    }),
+    'claude-opus-5-5'
+  )
+  assert.equal(dominantModel({ 'claude-fable-5-1': {} }), 'claude-fable-5-1')
+  assert.equal(dominantModel({}), null)
+  assert.equal(dominantModel(undefined), null)
 })

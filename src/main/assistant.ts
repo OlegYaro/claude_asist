@@ -825,7 +825,7 @@ export class Assistant extends EventEmitter {
       const before = this.phase
       this.setPhase('checking')
       this.logAction('Ревью', 'независимый ревьюер изучает изменения…')
-      const { issues, usage } = await reviewChanges(
+      const { issues, usage, model } = await reviewChanges(
         {
           dir,
           task: this.task.text,
@@ -835,7 +835,7 @@ export class Assistant extends EventEmitter {
         },
         signal
       )
-      this.logUsage('Ревью', usage)
+      this.logUsage('Ревью', usage, model)
       if (signal.aborted) return null
       this.setPhase(before === 'checking' ? 'executing' : before)
 
@@ -876,7 +876,7 @@ export class Assistant extends EventEmitter {
     const before = this.phase
     this.setPhase('checking')
     this.logAction('Полнота', 'сверяю результат с планом…')
-    const { missing, usage } = await checkCompletion(
+    const { missing, usage, model } = await checkCompletion(
       {
         dir: this.session.projectDir,
         task: this.task.text,
@@ -886,7 +886,7 @@ export class Assistant extends EventEmitter {
       },
       signal
     )
-    this.logUsage('Проверка', usage)
+    this.logUsage('Проверка', usage, model)
     if (signal.aborted) return null
     this.setPhase(before === 'checking' ? 'executing' : before)
 
@@ -1152,7 +1152,7 @@ export class Assistant extends EventEmitter {
   }
 
   /** Токены отдельного запуска `claude -p` (ревью, проверка полноты) — в статистику расхода. */
-  private logUsage(tool: string, usage: TokenUsage | null): void {
+  private logUsage(tool: string, usage: TokenUsage | null, model: string | null): void {
     if (!usage) return
     this.emit('action', {
       kind: 'usage',
@@ -1160,8 +1160,8 @@ export class Assistant extends EventEmitter {
       tools: [tool],
       usage,
       at: Date.now(),
-      // Проверка полноты идёт на sonnet, ревью — на модели по умолчанию; для оценки лимита цена приближённая.
-      model: 'sonnet'
+      // Фактическая модель запуска (modelUsage ответа); null — цена запасная.
+      model
     } satisfies TranscriptEvent)
   }
 

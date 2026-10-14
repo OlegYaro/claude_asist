@@ -4,6 +4,7 @@ import { loadSettings } from './settings'
 import type { MissingStep } from './model-routing'
 import type { TokenUsage } from '../shared/types'
 import { parseUsage } from '../shared/token-stats'
+import { dominantModel } from '../shared/limit-estimate'
 
 export interface ReviewIssue {
   file: string
@@ -82,10 +83,14 @@ function reviewPrompt(input: ReviewInput): string {
 export async function reviewChanges(
   input: ReviewInput,
   signal?: AbortSignal
-): Promise<{ issues: ReviewIssue[] | null; usage: TokenUsage | null }> {
+): Promise<{ issues: ReviewIssue[] | null; usage: TokenUsage | null; model: string | null }> {
   const run = await runReadonlyClaude(input.dir, reviewPrompt(input), SCHEMA, null, signal)
   const issues = (run.output as { issues?: ReviewIssue[] } | null)?.issues
-  return { issues: Array.isArray(issues) ? issues.filter((i) => i && i.problem) : null, usage: run.usage }
+  return {
+    issues: Array.isArray(issues) ? issues.filter((i) => i && i.problem) : null,
+    usage: run.usage,
+    model: run.model
+  }
 }
 
 const COMPLETION_SCHEMA = {
@@ -131,14 +136,15 @@ function completionPrompt(input: ReviewInput & { plan: string }): string {
 export async function checkCompletion(
   input: ReviewInput & { plan: string },
   signal?: AbortSignal
-): Promise<{ missing: MissingStep[] | null; usage: TokenUsage | null }> {
+): Promise<{ missing: MissingStep[] | null; usage: TokenUsage | null; model: string | null }> {
   const run = await runReadonlyClaude(input.dir, completionPrompt(input), COMPLETION_SCHEMA, 'sonnet', signal)
   const out = run.output as { done?: boolean; missing?: MissingStep[] } | null
-  if (!out || !Array.isArray(out.missing)) return { missing: null, usage: run.usage }
+  if (!out || !Array.isArray(out.missing)) return { missing: null, usage: run.usage, model: run.model }
   const missing = out.missing.filter((m) => m && typeof m.what === 'string' && m.what.trim())
   return {
     missing: missing.map((m) => ({ step: Number.isInteger(m.step) && m.step > 0 ? m.step : 0, what: m.what.trim() })),
-    usage: run.usage
+    usage: run.usage,
+    model: run.model
   }
 }
 
@@ -149,8 +155,8 @@ async function runReadonlyClaude(
   schema: object,
   model: string | null,
   signal?: AbortSignal
-): Promise<{ output: unknown; usage: TokenUsage | null }> {
-  const failed = { output: null, usage: null }
+): Promise<{ output: unknown; usage: TokenUsage | null; model: string | null }> {
+  const failed = { output: null, usage: null, model: null }
   const bin = await resolveClaudeBin(loadSettings().claudeBinPath)
   if (!bin) return failed
   const env = await getLoginShellEnv()
@@ -197,8 +203,13 @@ async function runReadonlyClaude(
       (err, stdout) => {
         if (err && !stdout) return resolve(failed)
         try {
-          const out = JSON.parse(stdout) as { structured_output?: unknown; usage?: unknown }
-          resolve({ output: out.structured_output ?? null, usage: parseUsage(out.usage) })
+          const out = JSON.parse(stdout) as { structured_output?: unknown; usage?: unknown; modelUsage?: unknown }
+          // Фактическая модель — из modelUsage; без неё — та, что просили (null: у пользователя по умолчанию).
+          resolve({
+            output: out.structured_output ?? null,
+            usage: parseUsage(out.usage),
+            model: dominantModel(out.modelUsage) ?? model
+          })
         } catch {
           resolve(failed)
         }

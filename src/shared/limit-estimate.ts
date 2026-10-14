@@ -57,6 +57,28 @@ export function usageCostUsd(usage: TokenUsage, model: string | null | undefined
   return (w.input + w.cacheWrite + w.cacheRead + w.output) / 1_000_000
 }
 
+/**
+ * Основная модель отдельного запуска `claude -p`: в `modelUsage` ответа ключи — id моделей,
+ * берём ту, на которую ушло больше токенов. Нет данных — null (цена тогда запасная).
+ */
+export function dominantModel(modelUsage: unknown): string | null {
+  if (typeof modelUsage !== 'object' || modelUsage === null) return null
+  let best: string | null = null
+  let bestTokens = -1
+  for (const [id, raw] of Object.entries(modelUsage)) {
+    const u = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {}
+    const n = (['inputTokens', 'outputTokens', 'cacheReadInputTokens', 'cacheCreationInputTokens'] as const).reduce(
+      (sum, k) => sum + (typeof u[k] === 'number' ? u[k] : 0),
+      0
+    )
+    if (n > bestTokens) {
+      best = id
+      bestTokens = n
+    }
+  }
+  return best
+}
+
 export const WINDOW_SEC = 5 * 60 * 60
 const MAX_RATIOS = 20
 const MAX_ENTRIES = 5000
