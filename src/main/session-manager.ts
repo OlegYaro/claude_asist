@@ -115,6 +115,10 @@ export class SessionManager extends EventEmitter {
       // правилам и с записью каждого в панель действий.
       permissionMode: settings.permissionMode ?? 'default',
       claudeBinPath: settings.claudeBinPath,
+      // Автовыбор: план на Opus, исполнение на Sonnet (`opusplan`), шаги — субагентами
+      // на моделях из плана. Иначе — модель, выбранная вручную.
+      model: settings.autoModel ? 'opusplan' : settings.sessionModel === 'default' ? null : settings.sessionModel,
+      autoModel: settings.autoModel,
       extraArgs,
       ...(resumeId ? { resumeId } : {})
     })

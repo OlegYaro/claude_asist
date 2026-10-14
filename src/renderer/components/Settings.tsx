@@ -283,6 +283,35 @@ export default function Settings({ onClose }: Props): React.JSX.Element {
               <label className="settings__row settings__row--check">
                 <input
                   type="checkbox"
+                  checked={settings.autoModel}
+                  onChange={(e) => void patch({ autoModel: e.target.checked })}
+                />
+                <span>Автовыбор модели</span>
+              </label>
+              <label className="settings__row">
+                <span className="settings__label">Модель сессии</span>
+                <select
+                  className="settings__control"
+                  value={settings.sessionModel}
+                  disabled={settings.autoModel}
+                  onChange={(e) => void patch({ sessionModel: e.target.value as SettingsData['sessionModel'] })}
+                >
+                  <option value="default">По умолчанию Claude Code</option>
+                  <option value="opus">Opus</option>
+                  <option value="sonnet">Sonnet</option>
+                  <option value="haiku">Haiku</option>
+                  <option value="fable">Fable</option>
+                </select>
+              </label>
+              <p className="settings__hint">
+                Автовыбор: план составляет Opus и расписывает шаги по моделям (Haiku, Sonnet, Opus),
+                шаги выполняют субагенты. Перед ревью приложение сверяет результат с планом и
+                недоделанное перезапускает на модели сильнее. Выключено — вся сессия на выбранной
+                модели. Применяется к следующему запуску сессии.
+              </p>
+              <label className="settings__row settings__row--check">
+                <input
+                  type="checkbox"
                   checked={settings.autoGit}
                   onChange={(e) => void patch({ autoGit: e.target.checked })}
                 />

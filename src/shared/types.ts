@@ -243,6 +243,9 @@ export type ListenMode = 'always' | 'push'
 
 export type PlanMode = 'auto' | 'always' | 'never'
 
+/** Модель сессии при ручном выборе: алиас для `claude --model`; `default` — флаг не передаём. */
+export type SessionModel = 'default' | 'opus' | 'sonnet' | 'haiku' | 'fable'
+
 export interface Settings {
   /** Недавние папки проектов, свежие первыми. */
   recentProjects: string[]
@@ -279,6 +282,14 @@ export interface Settings {
   qualityGate: boolean
   /** Перед завершением задачи с правками — независимое ревью субагентом. */
   autoReview: boolean
+  /**
+   * Автовыбор модели: план — на Opus, шаги — субагентами на моделях из плана,
+   * недоделанное — на модели сильнее. Выключено — вся сессия на `sessionModel`.
+   * Применяется к новой сессии.
+   */
+  autoModel: boolean
+  /** Модель сессии, когда автовыбор выключен. */
+  sessionModel: SessionModel
   /** Git сам: репозиторий при открытии проекта без git, коммит после зелёных проверок. */
   autoGit: boolean
   /** Давать согласие на действия Claude автоматически (опасные команды всё равно спросят). */
@@ -309,6 +320,8 @@ export const DEFAULT_SETTINGS: Settings = {
   planMode: 'auto',
   qualityGate: true,
   autoReview: true,
+  autoModel: true,
+  sessionModel: 'default',
   autoGit: true,
   autoApprove: true,
   telegramEnabled: true,

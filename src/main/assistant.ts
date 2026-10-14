@@ -18,7 +18,8 @@ import {
   type CommitResult,
   type RepoInit
 } from './quality'
-import { reviewChanges } from './reviewer'
+import { checkCompletion, reviewChanges } from './reviewer'
+import { completionReason, parsePlanModels, planEscalations, type StepModel } from './model-routing'
 import { ROLLBACK_PROMPT_PREFIX } from './history-logic'
 import {
   isApprove,
@@ -55,6 +56,8 @@ const DENY_CONFIRM_MS = 3000
 const SUBMIT_CONFIRM_MS = 2500
 /** Сколько раз подряд проверки могут вернуть Claude к работе за одну задачу. */
 const MAX_GATE_ROUNDS = 3
+/** Сколько раз за задачу недоделанное по плану отдаётся модели сильнее. */
+const MAX_ESCALATIONS = 2
 
 /** Тип строки в «Действиях» для записей самого приложения. */
 const ACTION_KIND: Record<string, ActionKind> = {
@@ -677,6 +680,13 @@ export class Assistant extends EventEmitter {
       this.logAction('План', 'Claude решил сначала составить план')
       return null
     }
+    if (tool === 'Agent') {
+      const agent = input as { description?: unknown; model?: unknown } | null
+      const what = typeof agent?.description === 'string' ? agent.description : 'шаг задачи'
+      const model = typeof agent?.model === 'string' ? agent.model : 'модель сессии'
+      this.logAction('Субагент', `${what} · ${model}`)
+      return null
+    }
 
     const command = (input as { command?: unknown } | null)?.command
     const readOnly = tool === 'Bash' && typeof command === 'string' && READONLY_BASH.test(command)
@@ -795,6 +805,12 @@ export class Assistant extends EventEmitter {
       }
     }
 
+    if (this.session.autoModel && this.task.plan && !this.task.complete) {
+      const decision = await this.checkPlanCompletion(this.task.plan, signal)
+      if (signal.aborted) return null
+      if (decision) return decision
+    }
+
     if (settings.autoReview && !this.task.reviewed) {
       this.task.reviewed = true
       const before = this.phase
@@ -834,6 +850,52 @@ export class Assistant extends EventEmitter {
     }
     this.task.commitReady = true
     return null
+  }
+
+  /**
+   * Автовыбор модели: перед ревью сверить результат с планом. Недоделанные шаги
+   * Claude перезапускает субагентом на модели на ступень сильнее — не больше
+   * MAX_ESCALATIONS раз, дальше полноту оценит ревью.
+   */
+  private async checkPlanCompletion(plan: string, signal: AbortSignal): Promise<PermissionDecision> {
+    if (this.task.escalations >= MAX_ESCALATIONS) {
+      this.task.complete = true
+      this.logAction('Полнота', `уже ${MAX_ESCALATIONS} перезапуска на модели сильнее — дальше решит ревью`, true)
+      return null
+    }
+    const before = this.phase
+    this.setPhase('checking')
+    this.logAction('Полнота', 'сверяю результат с планом…')
+    const missing = await checkCompletion(
+      {
+        dir: this.session.projectDir,
+        task: this.task.text,
+        plan,
+        baseSha: this.task.pendingCheckpoint ?? null,
+        files: [...this.task.files]
+      },
+      signal
+    )
+    if (signal.aborted) return null
+    this.setPhase(before === 'checking' ? 'executing' : before)
+
+    if (missing === null) {
+      this.task.complete = true
+      this.logAction('Полнота', 'не удалось проверить — продолжаю без неё', true)
+      return null
+    }
+    if (missing.length === 0) {
+      this.task.complete = true
+      this.logAction('Полнота', 'план выполнен целиком ✓')
+      return null
+    }
+    this.task.escalations++
+    const escalations = planEscalations(missing, parsePlanModels(plan), this.task.triedModels)
+    for (const e of escalations) {
+      this.logAction('Полнота', `${e.step > 0 ? `шаг ${e.step}` : 'вне шагов'}: ${e.what} → ${e.model}`, true)
+    }
+    this.say('По плану сделано не всё — перезапускаю на модели сильнее.')
+    return { behavior: 'block', reason: completionReason(escalations) }
   }
 
   /** Рискованная команда: озвучиваем и ждём «да» / «нет». */
@@ -1123,6 +1185,12 @@ interface TaskState {
   checkpointShown: boolean
   reviewed: boolean
   gateRounds: number
+  /** Проверка полноты по плану пройдена (или её больше не делаем). */
+  complete: boolean
+  /** Сколько раз недоделанное отдавали модели сильнее. */
+  escalations: number
+  /** Шаг плана → модель последнего перезапуска; следующий круг поднимется выше. */
+  triedModels: Map<number, StepModel>
   /** Правки прошли проверки (или они выключены) — результат можно коммитить. */
   commitReady: boolean
   committed: boolean
@@ -1140,6 +1208,9 @@ function newTask(): TaskState {
     checkpointShown: false,
     reviewed: false,
     gateRounds: 0,
+    complete: false,
+    escalations: 0,
+    triedModels: new Map(),
     commitReady: false,
     committed: false
   }

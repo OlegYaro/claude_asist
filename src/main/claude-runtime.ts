@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import * as pty from 'node-pty'
 import { getLoginShellEnv, resolveClaudeBin } from './paths'
-import { SESSION_PROTOCOL } from './protocol'
+import { sessionProtocol } from './protocol'
 import { APP_SESSION_NAME } from './history-logic'
 
 /**
@@ -25,6 +25,14 @@ export interface ClaudeSessionOptions {
   extraArgs?: string[]
   /** Продолжить прошлую сессию с этим id (`--resume`) вместо новой. */
   resumeId?: string
+  /** Передаётся как `--model`; null — модель по умолчанию из настроек Claude Code. */
+  model: string | null
+  /**
+   * Автовыбор модели: в протоколе — правила распределения шагов по моделям, а
+   * субагенты работают синхронно (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`): в фоне
+   * Claude заканчивал бы ход раньше них, и проверки шли бы по недоделанной задаче.
+   */
+  autoModel: boolean
 }
 
 export class ClaudeNotFoundError extends Error {
@@ -60,6 +68,11 @@ export class ClaudeSession extends EventEmitter {
     this.sessionId = opts.resumeId ?? randomUUID()
   }
 
+  /** Режим автовыбора модели, с которым сессия запущена (настройка меняет только следующую). */
+  get autoModel(): boolean {
+    return this.opts.autoModel
+  }
+
   get isRunning(): boolean {
     return this.proc !== null && !this.exited
   }
@@ -80,8 +93,9 @@ export class ClaudeSession extends EventEmitter {
       // Протокол голосовой работы: русский язык, сам выбирай — ответить, сделать
       // или начать с плана, стандарты продакшен-качества. См. protocol.ts.
       '--append-system-prompt',
-      SESSION_PROTOCOL
+      sessionProtocol({ autoModel: this.opts.autoModel })
     ]
+    if (this.opts.model) args.push('--model', this.opts.model)
     if (this.opts.permissionMode) args.push('--permission-mode', this.opts.permissionMode)
     if (this.opts.extraArgs?.length) args.push(...this.opts.extraArgs)
 
@@ -90,7 +104,10 @@ export class ClaudeSession extends EventEmitter {
       cwd: this.projectDir,
       cols: this.cols,
       rows: this.rows,
-      env: env as Record<string, string>
+      env: {
+        ...(env as Record<string, string>),
+        ...(this.opts.autoModel ? { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' } : {})
+      }
     })
 
     this.proc.onData((chunk) => {
