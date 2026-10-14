@@ -91,8 +91,9 @@ export class SessionManager extends EventEmitter {
   /**
    * Запускает сессию в указанной папке, поднимает мост и (опционально) окно Terminal.
    * С `resumeId` продолжает прошлую сессию этого проекта: её переписка уходит в чат.
+   * С `freshId` начинает новую сессию под этим id (см. `restartCurrent`).
    */
-  async start(projectDir: string, resumeId?: string): Promise<SessionInfo> {
+  async start(projectDir: string, resumeId?: string, freshId?: string): Promise<SessionInfo> {
     // Размер транскрипта — до запуска: всё, что CLI допишет после, уже не история.
     let historyBytes = 0
     if (resumeId) {
@@ -140,7 +141,8 @@ export class SessionManager extends EventEmitter {
       autoModel: settings.autoModel,
       extraArgs,
       enabledPlugins: [...this.enabledPlugins],
-      ...(resumeId ? { resumeId } : {})
+      ...(resumeId ? { resumeId } : {}),
+      ...(freshId ? { sessionId: freshId } : {})
     })
     this.session = session
     // Другая сессия — её расход считаем с нуля; перезапуск той же (плагин) не сбрасывает.
@@ -409,6 +411,18 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Перезапускает текущую сессию под тем же id. Claude Code создаёт транскрипт
+   * только с первым сообщением, а `--resume` без него не находит сессию, поэтому
+   * до первого сообщения сессия стартует заново с `--session-id`.
+   */
+  private async restartCurrent(session: ClaudeSession): Promise<SessionInfo> {
+    const hasTranscript = (await sessionTranscript(session.projectDir, session.sessionId)) !== null
+    return hasTranscript
+      ? this.start(session.projectDir, session.sessionId)
+      : this.start(session.projectDir, undefined, session.sessionId)
+  }
+
+  /**
    * Подключает плагин и перезапускает Claude Code в той же сессии (`--resume`):
    * переписка, окно и настройки приложения остаются. Только между задачами.
    */
@@ -431,7 +445,7 @@ export class SessionManager extends EventEmitter {
     this.pluginRequest = null
     this.enabledPlugins.add(plugin.id)
     try {
-      const info = await this.start(session.projectDir, session.sessionId)
+      const info = await this.restartCurrent(session)
       // Ассистент ставит текст в очередь, пока Claude Code запускается.
       this.submit(`Плагин ${plugin.title} подключён, сессия перезапущена. Продолжай задачу.`)
       return info
@@ -469,7 +483,7 @@ export class SessionManager extends EventEmitter {
     this.modelChangePending = false
     this.restarting = true
     try {
-      await this.start(session.projectDir, session.sessionId)
+      await this.restartCurrent(session)
     } catch {
       // start() сам сообщил причину.
     } finally {

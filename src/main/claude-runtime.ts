@@ -27,6 +27,8 @@ export interface ClaudeSessionOptions {
   enabledPlugins?: string[]
   /** Продолжить прошлую сессию с этим id (`--resume`) вместо новой. */
   resumeId?: string
+  /** Новая сессия с заранее известным id (перезапуск той, у которой ещё нет транскрипта). */
+  sessionId?: string
   /** Передаётся как `--model`; null — модель по умолчанию из настроек Claude Code. */
   model: string | null
   /**
@@ -67,7 +69,7 @@ export class ClaudeSession extends EventEmitter {
   constructor(private readonly opts: ClaudeSessionOptions) {
     super()
     this.projectDir = opts.projectDir
-    this.sessionId = opts.resumeId ?? randomUUID()
+    this.sessionId = opts.resumeId ?? opts.sessionId ?? randomUUID()
   }
 
   /** Режим автовыбора модели, с которым сессия запущена (настройка меняет только следующую). */
