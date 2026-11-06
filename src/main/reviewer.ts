@@ -61,7 +61,7 @@ function reviewPrompt(input: ReviewInput): string {
     input.plan ? `\nОдобренный план:\n${input.plan.slice(0, 4000)}` : '',
     '',
     where,
-    'Прочитай окружающий код, чтобы понимать контекст.',
+    'Прочитай окружающий код, чтобы понимать контекст. Смотри дифф, файлы читай точечно, по проекту не броди — экономь токены.',
     '',
     'Проверь: корректность и граничные случаи; обработку ошибок; соответствие задаче и плану (всё ли сделано, нет ли лишнего);',
     'безопасность (инъекции, секреты, небезопасный ввод); тесты на новое поведение; следование паттернам проекта;',
@@ -84,7 +84,14 @@ export async function reviewChanges(
   input: ReviewInput,
   signal?: AbortSignal
 ): Promise<{ issues: ReviewIssue[] | null; usage: TokenUsage | null; model: string | null }> {
-  const run = await runReadonlyClaude(input.dir, reviewPrompt(input), SCHEMA, null, signal)
+  const { reviewModel } = loadSettings()
+  const run = await runReadonlyClaude(
+    input.dir,
+    reviewPrompt(input),
+    SCHEMA,
+    reviewModel === 'default' ? null : reviewModel,
+    signal
+  )
   const issues = (run.output as { issues?: ReviewIssue[] } | null)?.issues
   return {
     issues: Array.isArray(issues) ? issues.filter((i) => i && i.problem) : null,

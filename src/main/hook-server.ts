@@ -88,7 +88,8 @@ export class HookServer {
    *    можно остановить до запуска, а точку отката — сделать до первой правки.
    *    Сюда же EnterPlanMode: Claude сам решил начать с плана; и Agent — какому
    *    субагенту и на какой модели отдан шаг (хуки его инструментов приходят
-   *    с тем же session_id, так что правки субагентов тоже под контролем);
+   *    с тем же session_id, так что правки субагентов тоже под контролем); и WebFetch,
+   *    WebSearch, mcp__* — для правил разрешений (спросить/запретить);
    *  - Stop — Claude хочет закончить: приложение запускает проверки проекта и
    *    ревью. Для Stop HTTP-хук не задокументирован, поэтому команда: curl
    *    пересылает вход сюда же и печатает наш ответ.
@@ -123,7 +124,7 @@ export class HookServer {
       hooks: {
         PermissionRequest: [{ matcher: '*', hooks: [hook] }],
         PreToolUse: [
-          { matcher: 'Bash|Edit|Write|MultiEdit|NotebookEdit|EnterPlanMode|Agent', hooks: [hook] }
+          { matcher: 'Bash|Edit|Write|MultiEdit|NotebookEdit|EnterPlanMode|Agent|WebFetch|WebSearch|mcp__.*', hooks: [hook] }
         ],
         Stop: [{ hooks: [viaCurl] }],
         // Подтверждение, что сообщение действительно отправлено, а не застряло в поле.

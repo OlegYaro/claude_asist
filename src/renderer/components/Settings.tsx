@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Settings as SettingsData, SttStatus } from '../../shared/types'
 import TelegramSettings from './TelegramSettings'
+import PermissionsSettings from './PermissionsSettings'
 
 interface Props {
   onClose: () => void
@@ -41,6 +42,7 @@ export default function Settings({ onClose }: Props): React.JSX.Element {
   const [stt, setStt] = useState<SttStatus | null>(null)
   const [saveNote, setSaveNote] = useState<string | null>(null)
   const [voices, setVoices] = useState<string[] | null>(null)
+  const [permsOpen, setPermsOpen] = useState(false)
 
   useEffect(() => {
     void window.desk.settings.get().then(setSettings)
@@ -276,9 +278,27 @@ export default function Settings({ onClose }: Props): React.JSX.Element {
                 />
                 <span>Независимое ревью перед завершением задачи</span>
               </label>
+              <label
+                className={`settings__row${settings.autoReview ? '' : ' settings__row--off'}`}
+              >
+                <span className="settings__label">Модель ревью</span>
+                <select
+                  className="settings__control"
+                  value={settings.reviewModel}
+                  disabled={!settings.autoReview}
+                  onChange={(e) => void patch({ reviewModel: e.target.value as SettingsData['reviewModel'] })}
+                >
+                  <option value="default">По умолчанию Claude Code</option>
+                  <option value="opus">Opus</option>
+                  <option value="sonnet">Sonnet (экономнее)</option>
+                  <option value="haiku">Haiku</option>
+                  <option value="fable">Fable</option>
+                </select>
+              </label>
               <p className="settings__hint">
                 Пока проверки красные, Claude не может закончить — получает ошибки и исправляет
                 причину (до трёх попыток). Ревью — отдельный запуск Claude в чистом контексте, только чтение.
+                Для ревью обычно хватает Sonnet, он расходует лимит заметно меньше Opus.
               </p>
               <label className="settings__row settings__row--check">
                 <input
@@ -330,9 +350,14 @@ export default function Settings({ onClose }: Props): React.JSX.Element {
                 <span>Давать согласие на действия автоматически</span>
               </label>
               <p className="settings__hint">
-                Каждое согласие видно в «Действиях». Рискованные команды (rm -rf, sudo, git push
-                --force и подобные) всё равно ждут вашего «да».
+                Каждое согласие видно в «Действиях». Что разрешать само, о чём спрашивать, а что
+                запрещать, настраивается отдельно.
               </p>
+              <div className="settings__row">
+                <button className="btn btn--small" onClick={() => setPermsOpen(true)}>
+                  Разрешения…
+                </button>
+              </div>
             </section>
 
             <section className="settings__group">
@@ -448,6 +473,7 @@ export default function Settings({ onClose }: Props): React.JSX.Element {
           </button>
         </footer>
       </div>
+      {permsOpen && <PermissionsSettings onClose={() => setPermsOpen(false)} />}
     </div>
   )
 }

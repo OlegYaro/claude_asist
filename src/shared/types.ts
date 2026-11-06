@@ -32,6 +32,7 @@ export interface SessionInfo {
 }
 
 import type { LimitsSnapshot } from './limit-estimate.ts'
+import type { PermMode, PermRuleId } from './permissions.ts'
 export type { LimitsSnapshot }
 
 export interface PluginRequest {
@@ -318,6 +319,10 @@ export interface Settings {
   autoModel: boolean
   /** Модель сессии, когда автовыбор выключен. */
   sessionModel: SessionModel
+  /** Модель независимого ревью; 'default' — модель по умолчанию Claude Code. */
+  reviewModel: SessionModel
+  /** Индивидуальные режимы правил разрешений; чего нет — берётся default правила. */
+  permissions: Partial<Record<PermRuleId, PermMode>>
   /** Git сам: репозиторий при открытии проекта без git, коммит после зелёных проверок. */
   autoGit: boolean
   /** Давать согласие на действия Claude автоматически (опасные команды всё равно спросят). */
@@ -352,6 +357,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoReview: true,
   autoModel: true,
   sessionModel: 'default',
+  reviewModel: 'sonnet',
+  permissions: {},
   autoGit: true,
   autoApprove: true,
   telegramEnabled: true,

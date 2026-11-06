@@ -33,6 +33,7 @@ import {
 } from '../shared/intents'
 import { answerFor, parseQuestions, type QuestionItem } from './questions'
 import { parsePluginRequest } from '../shared/plugins'
+import { classify, isReadOnlyBash, permissionMode } from '../shared/permissions'
 import { isTuiReady } from './tui-ready'
 import type {
   ActionKind,
@@ -79,32 +80,6 @@ const ACTION_KIND: Record<string, ActionKind> = {
 
 /** Инструменты, которые меняют файлы: после них нужны проверки и точка отката. */
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
-
-/** Команды Bash, которые точно ничего не меняют, — проверки после них не нужны. */
-const READONLY_BASH =
-  /^\s*(ls|cat|head|tail|less|grep|rg|find|fd|pwd|echo|printf|wc|which|whoami|date|tree|file|stat|du|df|env|node\s+-v|npm\s+(ls|view|-v)|git\s+(status|log|diff|show|branch|remote|rev-parse|blame))\b[^;&|>]*$/
-
-/**
- * Команды, на которые согласие автоматически не даём: их последствия трудно
- * откатить. Приложение озвучит запрос и подождёт вашего «да».
- */
-const DANGEROUS_BASH = [
-  /\brm\s+(-\w*\s+)*-\w*[rR]\w*f|\brm\s+(-\w*\s+)*-\w*f\w*[rR]/,
-  /\bsudo\b/,
-  /\bgit\s+push\b.*(--force|\s-f\b)/,
-  /\bgit\s+reset\s+--hard\b/,
-  /\bgit\s+clean\s+-\w*f/,
-  /\bmkfs\b|\bdd\s+if=/,
-  /\bchmod\s+-R\s+777\b/,
-  /\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(ba|z)?sh\b/,
-  /\bdrop\s+(table|database)\b/i
-]
-
-function isDangerous(tool: string, input: unknown): boolean {
-  if (tool !== 'Bash') return false
-  const command = (input as { command?: unknown } | null)?.command
-  return typeof command === 'string' && DANGEROUS_BASH.some((re) => re.test(command))
-}
 
 /** Без ANSI и пробелов: TUI рисует текст кусками, а нам нужно лишь найти фразу. */
 function flatten(text: string): string {
@@ -694,26 +669,43 @@ export class Assistant extends EventEmitter {
       return null
     }
 
-    const command = (input as { command?: unknown } | null)?.command
-    const readOnly = tool === 'Bash' && typeof command === 'string' && READONLY_BASH.test(command)
-    if (EDIT_TOOLS.has(tool)) {
-      this.task.edited = true
-      const file = (input as { file_path?: unknown; notebook_path?: unknown } | null)
-      const path = file?.file_path ?? file?.notebook_path
-      if (typeof path === 'string') this.task.files.add(path)
-    }
-    if (tool === 'Bash') {
-      this.task.bashRan = true
-      if (!readOnly) this.task.bashMaybeChanged = true
-    }
-    // Точку отката делаем молча ДО первой команды, которая может что-то поменять;
-    // показываем её, только когда правки в задаче подтвердятся.
-    if (!readOnly && this.task.pendingCheckpoint === undefined) {
-      await this.repoReady
-      this.task.pendingCheckpoint = await createCheckpoint(this.session.projectDir)
+    // Правила разрешений из настроек: запретить, спросить голосом или не вмешиваться.
+    // Отказ — до любого учёта: отклонённое действие не выполнено, а значит не меняет
+    // ни флаги задачи, ни список файлов, ни точку отката.
+    const rule = classify(tool, input)
+    const mode = rule ? permissionMode(loadSettings().permissions, rule) : 'allow'
+    if (rule && mode === 'deny') {
+      this.logAction('Согласие', `${rule.label}: запрещено в настройках — ${summary}`, true)
+      return {
+        behavior: 'deny',
+        message: `Запрещено в настройках разрешений приложения: ${rule.label}.`
+      }
     }
 
-    return isDangerous(tool, input) ? this.holdDangerous(tool, summary) : null
+    // Учёт и точка отката — только для того, что может менять проект: правки файлов
+    // и Bash. Веб и MCP-инструменты (их хук получает ради правил) проект не меняют.
+    if (EDIT_TOOLS.has(tool) || tool === 'Bash') {
+      const command = (input as { command?: unknown } | null)?.command
+      const readOnly = tool === 'Bash' && typeof command === 'string' && isReadOnlyBash(command)
+      if (EDIT_TOOLS.has(tool)) {
+        this.task.edited = true
+        const file = input as { file_path?: unknown; notebook_path?: unknown } | null
+        const path = file?.file_path ?? file?.notebook_path
+        if (typeof path === 'string') this.task.files.add(path)
+      }
+      if (tool === 'Bash') {
+        this.task.bashRan = true
+        if (!readOnly) this.task.bashMaybeChanged = true
+      }
+      // Точку отката делаем молча ДО первой команды, которая может что-то поменять;
+      // показываем её, только когда правки в задаче подтвердятся.
+      if (!readOnly && this.task.pendingCheckpoint === undefined) {
+        await this.repoReady
+        this.task.pendingCheckpoint = await createCheckpoint(this.session.projectDir)
+      }
+    }
+
+    return mode === 'ask' ? this.holdDangerous(tool, summary) : null
   }
 
   /**
@@ -932,7 +924,7 @@ export class Assistant extends EventEmitter {
         }
       }
       this.setPhase('permission')
-      this.say('Нужно ваше согласие на рискованную команду.')
+      this.say('Нужно ваше согласие на действие.')
     })
   }
 
